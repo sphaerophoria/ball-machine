@@ -3,8 +3,11 @@ async function init() {
 	const canvas = document.getElementById("canvas");
 	var ctx = canvas.getContext("2d");
 
-	const ball_response = await fetch("/ball")
-	const ball = await ball_response.json();
+	const simulation_response = await fetch("/simulation_state")
+	const simulation_state = await simulation_response.json();
+
+	const ball = simulation_state.ball;
+
 	// Everything is scaled relative to width
 	const ball_x_px = ball.pos.x * canvas.width;
 	// Y relative to bottom
@@ -13,7 +16,7 @@ async function init() {
 
 	ctx.beginPath();
 	ctx.clearRect(0, 0, canvas.width, canvas.height);
-	ctx.fillStyle = "black";
+	ctx.strokeStyle = "black";
 	ctx.lineWidth = 5;
 	ctx.rect(0, 0, canvas.width, canvas.height);
 	ctx.stroke();
@@ -24,6 +27,16 @@ async function init() {
 	console.log("drawing ball");
 	ctx.closePath();
 	ctx.fill();
+
+	for (obj of simulation_state.collision_objects) {
+		ctx.beginPath();
+		ctx.strokeStyle = "blue";
+		ctx.moveTo(obj.a.x * canvas.width, canvas.height - obj.a.y * canvas.width);
+		ctx.lineTo(obj.b.x * canvas.width, canvas.height - obj.b.y * canvas.width);
+		ctx.lineWidth = 15;
+		ctx.closePath();
+		ctx.stroke();
+	}
 
 	window.setTimeout(init, 33);
 }
