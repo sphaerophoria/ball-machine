@@ -179,7 +179,7 @@ const Simulation = struct {
         if (ball.pos.y < ball.r) {
             const distance_into_ground = ball.r - ball.pos.y;
             ball.pos.y = ball.r + distance_into_ground;
-            ball.velocity.y *= -0.90;
+            ball.velocity.y *= -0.85;
         }
     }
 
