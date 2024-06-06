@@ -219,12 +219,7 @@ const Simulation = struct {
 
             const ball_line_intersection_point = obj.intersectionPoint(ball_collision_point, ball.velocity);
 
-            var collided: bool = undefined;
-            if (obj.a.x > obj.b.x) {
-                collided = ball_line_intersection_point.x > obj.b.x and ball_line_intersection_point.x < obj.a.x;
-            } else {
-                collided = ball_line_intersection_point.x > obj.a.x and ball_line_intersection_point.x < obj.b.x;
-            }
+            const collided = (obj.a.x < ball_line_intersection_point.x) != (obj.b.x < ball_line_intersection_point.x);
 
             if (collided) {
                 const vel_ground_proj_mag = ball.velocity.dot(obj_normal);
