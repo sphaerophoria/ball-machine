@@ -38,7 +38,7 @@ async function init() {
 		ctx.stroke();
 	}
 
-	window.setTimeout(init, 33);
+	window.setTimeout(init, 16);
 }
 
 window.onload = init;
