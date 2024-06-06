@@ -28,7 +28,7 @@ async function init() {
   ctx.closePath();
   ctx.fill();
 
-  for (obj of simulation_state.collision_objects) {
+  for (var obj of simulation_state.collision_objects) {
     ctx.beginPath();
     ctx.strokeStyle = "blue";
     ctx.moveTo(obj.a.x * canvas.width, canvas.height - obj.a.y * canvas.width);

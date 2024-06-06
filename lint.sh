@@ -5,6 +5,7 @@ set -ex
 zig build --summary all
 zig fmt build.zig --check
 zig fmt src --check
-prettier -c src
+prettier -c src/
+jshint src/
 
 echo "Success"

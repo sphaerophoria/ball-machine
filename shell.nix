@@ -14,6 +14,7 @@ pkgs.mkShell {
     nodePackages.typescript-language-server
     vscode-langservers-extracted
     nodePackages.prettier
+    nodePackages.jshint
   ];
 }
 
