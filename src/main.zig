@@ -300,7 +300,19 @@ pub fn runSimulation(ctx: *Simulation) !void {
     }
 }
 
+fn signal_handler(_: c_int) align(1) callconv(.C) void {}
+
 pub fn main() !void {
+    var sa = std.posix.Sigaction{
+        .handler = .{
+            .handler = &signal_handler,
+        },
+        .mask = std.posix.empty_sigset,
+        .flags = 0,
+    };
+
+    try std.posix.sigaction(std.posix.SIG.INT, &sa, null);
+
     const addr = std.net.Address.initIp4(.{ 127, 0, 0, 1 }, 8000);
     var tcp_server = try addr.listen(.{
         .reuse_address = true,
@@ -338,9 +350,11 @@ pub fn main() !void {
     } } };
 
     const thread = try std.Thread.spawn(.{}, runSimulation, .{&simulation_ctx});
-    defer thread.join();
+    thread.detach();
 
     while (true) {
+        var fds: [1]std.posix.pollfd = .{.{ .fd = tcp_server.stream.handle, .events = std.posix.POLL.IN, .revents = 0 }};
+        _ = try std.posix.ppoll(&fds, null, null);
         const connection = try tcp_server.accept();
         defer connection.stream.close();
 
