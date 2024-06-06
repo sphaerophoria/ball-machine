@@ -240,7 +240,7 @@ const Simulation = struct {
             self.duration = 0.0;
             self.ball.pos.x = self.prng.random().float(f32);
             self.ball.pos.y = ball_start_y;
-            self.ball.velocity.x = 0;
+            self.ball.velocity.x = self.prng.random().float(f32);
             self.ball.velocity.y = 0;
 
             self.collision_objects = .{
