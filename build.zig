@@ -10,11 +10,23 @@ pub fn build(b: *std.Build) void {
         .target = b.host,
     });
 
-    const generate_embedded_resources_step = b.addRunArtifact(generate_embedded_resources);
-    generate_embedded_resources_step.addDirectoryArg(b.path("src/res"));
-    const output = generate_embedded_resources_step.addOutputFileArg("resources.zig");
+    const chamber = b.addExecutable(.{
+        .name = "chamber",
+        .root_source_file = .{ .path = "src/chamber.zig" },
+        .target = b.resolveTargetQuery(std.zig.CrossTarget.parse(
+            .{ .arch_os_abi = "wasm32-freestanding" },
+        ) catch unreachable),
+        .optimize = opt,
+    });
+    chamber.entry = .disabled;
+    chamber.rdynamic = true;
 
+    const generate_embedded_resources_step = b.addRunArtifact(generate_embedded_resources);
+    const output = generate_embedded_resources_step.addOutputFileArg("resources.zig");
     _ = generate_embedded_resources_step.addDepFileOutputArg("deps.d");
+    generate_embedded_resources_step.addDirectoryArg(b.path("src/res"));
+    generate_embedded_resources_step.addDirectoryArg(chamber.getEmittedBin());
+
     const exe = b.addExecutable(.{
         .name = "ball-machine",
         .root_source_file = b.path("src/main.zig"),

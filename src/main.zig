@@ -1,8 +1,14 @@
 const std = @import("std");
 const resources = @import("resources");
 const Allocator = std.mem.Allocator;
+const chamber = @import("chamber.zig");
+const physics = @import("physics.zig");
+const Pos2 = physics.Pos2;
+const Vec2 = physics.Vec2;
+const Ball = physics.Ball;
+const Surface = physics.Surface;
 
-const ball_start_x = 0.3;
+const ball_start_x = 0.5;
 const ball_start_y = 0.7;
 const ball_radius = 0.03;
 
@@ -21,6 +27,7 @@ pub fn pathToContentType(path: []const u8) ![]const u8 {
     const Extension = enum {
         @".js",
         @".html",
+        @".wasm",
     };
 
     inline for (std.meta.fields(Extension)) |field| {
@@ -29,6 +36,7 @@ pub fn pathToContentType(path: []const u8) ![]const u8 {
             switch (enumVal) {
                 .@".js" => return "text/javascript",
                 .@".html" => return "text/html",
+                .@".wasm" => return "application/wasm",
             }
         }
     }
@@ -53,7 +61,7 @@ pub fn getResource(alloc: Allocator, root: []const u8, path: []const u8) !std.fs
     return std.fs.openFileAbsolute(real_path, .{});
 }
 
-pub fn handleConnection(alloc: Allocator, www_root: ?[]const u8, connection: std.net.Server.Connection, ball: *const Ball, collision_objects: []const Surface) !void {
+pub fn handleConnection(alloc: Allocator, www_root: ?[]const u8, connection: std.net.Server.Connection, ball: *const Ball, chamber_state: []const u8) !void {
     var read_buffer: [4096]u8 = undefined;
     var http_server = std.http.Server.init(connection, &read_buffer);
 
@@ -62,7 +70,7 @@ pub fn handleConnection(alloc: Allocator, www_root: ?[]const u8, connection: std
     if (std.mem.eql(u8, req.head.target, "/simulation_state")) {
         const ResponseJson = struct {
             ball: Ball,
-            collision_objects: []const Surface,
+            chamber_state: []const u8,
         };
         var send_buffer: [4096]u8 = undefined;
         var response = req.respondStreaming(.{
@@ -74,7 +82,7 @@ pub fn handleConnection(alloc: Allocator, www_root: ?[]const u8, connection: std
                 }},
             },
         });
-        try std.json.stringify(ResponseJson{ .ball = ball.*, .collision_objects = collision_objects }, .{}, response.writer());
+        try std.json.stringify(ResponseJson{ .ball = ball.*, .chamber_state = chamber_state }, .{ .emit_strings_as_arrays = true }, response.writer());
         try response.end();
         return;
     }
@@ -106,116 +114,11 @@ pub fn handleConnection(alloc: Allocator, www_root: ?[]const u8, connection: std
     try response.end();
 }
 
-const Pos2 = struct {
-    x: f32,
-    y: f32,
-
-    fn add(p: Pos2, v: Vec2) Pos2 {
-        return .{
-            .x = p.x + v.x,
-            .y = p.y + v.y,
-        };
-    }
-
-    fn sub(a: Pos2, b: Pos2) Vec2 {
-        return .{
-            .x = a.x - b.x,
-            .y = a.y - b.y,
-        };
-    }
-};
-
-const Vec2 = struct {
-    x: f32,
-    y: f32,
-
-    fn length_2(self: Vec2) f32 {
-        return self.x * self.x + self.y * self.y;
-    }
-
-    fn length(self: Vec2) f32 {
-        return std.math.sqrt(self.length_2());
-    }
-
-    fn add(a: Vec2, b: Vec2) Vec2 {
-        return .{
-            .x = a.x + b.x,
-            .y = a.y + b.y,
-        };
-    }
-
-    fn mul(self: Vec2, val: f32) Vec2 {
-        return .{
-            .x = self.x * val,
-            .y = self.y * val,
-        };
-    }
-
-    fn dot(a: Vec2, b: Vec2) f32 {
-        return a.x * b.x + a.y * b.y;
-    }
-
-    fn normalized(self: Vec2) Vec2 {
-        return self.mul(1.0 / self.length());
-    }
-};
-
-const Ball = struct { pos: Pos2, r: f32, velocity: Vec2 };
-
-const Surface = struct {
-    // Assumed normal points up if a is left of b, down if b is left of a
-    a: Pos2,
-    b: Pos2,
-
-    // Find intersection point between an object at point P, given that it
-    // moved with velocity v
-    fn intersectionPoint(self: *const Surface, p: Pos2, v: Vec2) Pos2 {
-        //                          b
-        //         \       | v  _-^
-        //          \      | _-^
-        //          n\    _-^
-        //            \_-^ |
-        //          _-^\   |
-        //       _-^    \  | res
-        //  a _-^      l \o|
-        //     ^^^^----___\|
-        //                 p
-        //
-        // (note that n is perpendicular to a/b)
-        //
-        // * Use projection of ap onto n, that gives us line l
-        // * With n and v we can find angle o
-        // * With angle o and l, we can find res
-        //
-
-        const ap = self.a.sub(p);
-        const n = self.normal();
-        const v_norm_neg = v.mul(-1.0 / v.length());
-        const cos_o = n.dot(v_norm_neg);
-
-        const l = ap.dot(n);
-        const intersection_dist = l / cos_o;
-
-        const adjustment = v_norm_neg.mul(intersection_dist);
-        return p.add(adjustment);
-    }
-
-    fn normal(self: *const Surface) Vec2 {
-        var v = self.b.sub(self.a);
-        v = v.mul(1.0 / v.length());
-
-        return .{
-            .x = -v.y,
-            .y = v.x,
-        };
-    }
-};
-
 const Simulation = struct {
     mutex: std.Thread.Mutex,
     ball: Ball,
     prng: std.rand.DefaultPrng,
-    collision_objects: [2]Surface,
+    chamber_state: *chamber.State,
     duration: f32,
 
     fn applyGravity(ball: *Ball, delta: f32) void {
@@ -237,66 +140,9 @@ const Simulation = struct {
         ball.pos = ball.pos.add(ball.velocity.mul(delta));
     }
 
-    fn applyCollision(ball: *Ball, collision_objects: []const Surface, delta: f32) void {
-        for (collision_objects) |obj| {
-            const obj_normal = obj.normal();
-            const ball_collision_point_offs = obj_normal.mul(-ball.r);
-            const ball_collision_point = ball.pos.add(ball_collision_point_offs);
-
-            const above_line = obj.a.sub(ball_collision_point).dot(obj_normal) < 0;
-            if (above_line) {
-                continue;
-            }
-
-            const ball_line_intersection_point = obj.intersectionPoint(ball_collision_point, ball.velocity);
-
-            const collided = (obj.a.x < ball_line_intersection_point.x) != (obj.b.x < ball_line_intersection_point.x);
-
-            if (collided) {
-                const vel_ground_proj_mag = ball.velocity.dot(obj_normal);
-                const vel_adjustment = obj_normal.mul(-vel_ground_proj_mag * 2);
-
-                ball.velocity = ball.velocity.add(vel_adjustment);
-                const lost_velocity = 0.15 * (@abs(obj_normal.dot(ball.velocity.normalized())));
-                ball.velocity = ball.velocity.mul(1.0 - lost_velocity);
-
-                ball.pos = ball_line_intersection_point.add(ball_collision_point_offs.mul(-1.0));
-                ball.pos = ball.pos.add(ball.velocity.mul(delta));
-            }
-        }
-    }
-
-    fn resetAfterTimeout(self: *Simulation) void {
-        if (self.duration > 5.0) {
-            self.duration = 0.0;
-            self.ball.pos.x = self.prng.random().float(f32);
-            self.ball.pos.y = ball_start_y;
-            self.ball.velocity.x = self.prng.random().float(f32);
-            self.ball.velocity.y = 0;
-
-            self.collision_objects = .{
-                .{
-                    .a = .{
-                        .x = 0.0,
-                        .y = self.prng.random().float(f32),
-                    },
-                    .b = .{
-                        .x = 0.5,
-                        .y = 0.0,
-                    },
-                },
-                .{
-                    .a = .{
-                        .x = 0.5,
-                        .y = 0.0,
-                    },
-                    .b = .{
-                        .x = 1.0,
-                        .y = self.prng.random().float(f32),
-                    },
-                },
-            };
-        }
+    fn applyWrap(ball: *Ball) void {
+        ball.pos.x = @mod(ball.pos.x, 1.0);
+        ball.pos.y = @mod(ball.pos.y, 1.0);
     }
 
     fn step(self: *Simulation, delta: f32) void {
@@ -308,8 +154,8 @@ const Simulation = struct {
         applyGravity(&self.ball, delta);
         clampSpeed(&self.ball);
         applyVelocity(&self.ball, delta);
-        applyCollision(&self.ball, &self.collision_objects, delta);
-        self.resetAfterTimeout();
+        chamber.step(self.chamber_state, &self.ball, delta);
+        applyWrap(&self.ball);
     }
 };
 
@@ -458,27 +304,8 @@ pub fn main() !void {
             },
         },
         .prng = std.rand.DefaultPrng.init(@intCast(std.time.timestamp())),
-        .collision_objects = .{
-            .{
-                .a = .{
-                    .x = 0.0,
-                    .y = 0.5,
-                },
-                .b = .{
-                    .x = 0.5,
-                    .y = 0.0,
-                },
-            },
-            .{
-                .a = .{
-                    .x = 0.5,
-                    .y = 0.0,
-                },
-                .b = .{
-                    .x = 1.0,
-                    .y = 0.5,
-                },
-            },
+        .chamber_state = chamber.init() orelse {
+            return error.InternalError;
         },
     };
 
@@ -495,9 +322,9 @@ pub fn main() !void {
 
         simulation_ctx.mutex.lock();
         const ball = simulation_ctx.ball;
-        const collision_objects = simulation_ctx.collision_objects;
+        const chamber_state = chamber.save(simulation_ctx.chamber_state);
         simulation_ctx.mutex.unlock();
-        handleConnection(alloc, args.www_root, connection, &ball, &collision_objects) catch |e| {
+        handleConnection(alloc, args.www_root, connection, &ball, &chamber_state) catch |e| {
             std.log.err("Failed to handle connection: {any}", .{e});
         };
     }
