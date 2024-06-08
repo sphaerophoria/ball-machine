@@ -432,35 +432,44 @@ pub fn main() !void {
         .reuse_port = true,
     });
 
-    var simulation_ctx = Simulation{ .mutex = std.Thread.Mutex{}, .duration = 0.0, .ball = Ball{
-        .pos = .{
-            .x = ball_start_x,
-            .y = ball_start_y,
+    var simulation_ctx = Simulation{
+        .mutex = std.Thread.Mutex{},
+        .duration = 0.0,
+        .ball = Ball{
+            .pos = .{
+                .x = ball_start_x,
+                .y = ball_start_y,
+            },
+            .r = ball_radius,
+            .velocity = .{
+                .x = 0,
+                .y = 0,
+            },
         },
-        .r = ball_radius,
-        .velocity = .{
-            .x = 0,
-            .y = 0,
+        .prng = std.rand.DefaultPrng.init(@intCast(std.time.timestamp())),
+        .collision_objects = .{
+            .{
+                .a = .{
+                    .x = 0.0,
+                    .y = 0.5,
+                },
+                .b = .{
+                    .x = 0.5,
+                    .y = 0.0,
+                },
+            },
+            .{
+                .a = .{
+                    .x = 0.5,
+                    .y = 0.0,
+                },
+                .b = .{
+                    .x = 1.0,
+                    .y = 0.5,
+                },
+            },
         },
-    }, .prng = std.rand.DefaultPrng.init(@intCast(std.time.timestamp())), .collision_objects = .{ .{
-        .a = .{
-            .x = 0.0,
-            .y = 0.5,
-        },
-        .b = .{
-            .x = 0.5,
-            .y = 0.0,
-        },
-    }, .{
-        .a = .{
-            .x = 0.5,
-            .y = 0.0,
-        },
-        .b = .{
-            .x = 1.0,
-            .y = 0.5,
-        },
-    } } };
+    };
 
     const thread = try std.Thread.spawn(.{}, runSimulation, .{&simulation_ctx});
     thread.detach();
