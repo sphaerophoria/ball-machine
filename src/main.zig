@@ -1,8 +1,21 @@
 const std = @import("std");
+const resources = @import("resources");
+const Allocator = std.mem.Allocator;
 
 const ball_start_x = 0.3;
 const ball_start_y = 0.7;
 const ball_radius = 0.03;
+
+fn embeddedLookup(path: []const u8) ![]const u8 {
+    const path_rel = path[1..];
+    for (resources.resources) |elem| {
+        if (std.mem.eql(u8, elem.path, path_rel)) {
+            return elem.data;
+        }
+    }
+    std.log.err("No file {s} embedded in application", .{path});
+    return error.InvalidPath;
+}
 
 pub fn pathToContentType(path: []const u8) ![]const u8 {
     const Extension = enum {
@@ -23,13 +36,13 @@ pub fn pathToContentType(path: []const u8) ![]const u8 {
     return error.Unimplemented;
 }
 
-pub fn getResource(path: []const u8) !std.fs.File {
-    var dir = try std.fs.cwd().openDir("src/res", .{});
+pub fn getResource(root: []const u8, path: []const u8) !std.fs.File {
+    var dir = try std.fs.cwd().openDir(root, .{});
     defer dir.close();
     return dir.openFile(path[1..], .{});
 }
 
-pub fn handleConnection(connection: std.net.Server.Connection, ball: *const Ball, collision_objects: []const Surface) !void {
+pub fn handleConnection(www_root: ?[]const u8, connection: std.net.Server.Connection, ball: *const Ball, collision_objects: []const Surface) !void {
     var read_buffer: [4096]u8 = undefined;
     var http_server = std.http.Server.init(connection, &read_buffer);
 
@@ -55,9 +68,6 @@ pub fn handleConnection(connection: std.net.Server.Connection, ball: *const Ball
         return;
     }
 
-    var f = try getResource(req.head.target);
-    defer f.close();
-
     var send_buffer: [4096]u8 = undefined;
     var response = req.respondStreaming(.{
         .send_buffer = &send_buffer,
@@ -69,9 +79,19 @@ pub fn handleConnection(connection: std.net.Server.Connection, ball: *const Ball
         },
     });
 
-    var fifo = std.fifo.LinearFifo(u8, .{ .Static = 4096 }).init();
-    try fifo.pump(f.reader(), response.writer());
+    if (www_root) |root| {
+        if (getResource(root, req.head.target)) |f| {
+            var fifo = std.fifo.LinearFifo(u8, .{ .Static = 4096 }).init();
+            try fifo.pump(f.reader(), response.writer());
+            try response.end();
+            return;
+        } else |_| {
+            std.log.err("{s} not found in resource dir, falling back to embedded", .{req.head.target});
+        }
+    }
 
+    const content = try embeddedLookup(req.head.target);
+    try response.writer().writeAll(content);
     try response.end();
 }
 
@@ -297,6 +317,96 @@ pub fn runSimulation(ctx: *Simulation) !void {
 
 fn signal_handler(_: c_int) align(1) callconv(.C) void {}
 
+const Args = struct {
+    www_root: ?[]const u8,
+    port: u16,
+    it: std.process.ArgIterator,
+
+    const Option = enum {
+        @"--www-root",
+        @"--port",
+        @"--help",
+    };
+
+    pub fn parse(alloc: Allocator) !Args {
+        var it = try std.process.argsWithAllocator(alloc);
+        const process_name = it.next() orelse "ball-machine";
+
+        var www_root: ?[]const u8 = null;
+        var port: ?u16 = null;
+
+        while (it.next()) |arg| {
+            const option = std.meta.stringToEnum(Option, arg) orelse {
+                print("{s} is not a valid argument\n", .{arg});
+                help(process_name);
+            };
+            switch (option) {
+                .@"--www-root" => {
+                    www_root = it.next();
+                },
+                .@"--port" => {
+                    const port_s = it.next() orelse {
+                        print("--port provided with no argument\n", .{});
+                        help(process_name);
+                    };
+                    port = std.fmt.parseInt(u16, port_s, 10) catch {
+                        print("--port argument is not a valid u16\n", .{});
+                        help(process_name);
+                    };
+                },
+                .@"--help" => {
+                    help(process_name);
+                },
+            }
+        }
+
+        return .{
+            .www_root = www_root,
+            .port = port orelse {
+                print("--port not provied\n", .{});
+                help(process_name);
+            },
+            .it = it,
+        };
+    }
+
+    pub fn deinit(self: *Args) void {
+        self.it.deinit();
+    }
+
+    fn help(process_name: []const u8) noreturn {
+        print(
+            \\Usage: {s} [ARGS]
+            \\
+            \\Args:
+            \\
+        , .{process_name});
+
+        inline for (std.meta.fields(Option)) |option| {
+            print("{s}: ", .{option.name});
+            const option_val: Option = @enumFromInt(option.value);
+            switch (option_val) {
+                .@"--www-root" => {
+                    print("Optional, where to serve html from", .{});
+                },
+                .@"--port" => {
+                    print("Which port to run the webserver on", .{});
+                },
+                .@"--help" => {
+                    print("Show this help", .{});
+                },
+            }
+            print("\n", .{});
+        }
+        std.process.exit(1);
+    }
+
+    fn print(comptime fmt: []const u8, args: anytype) void {
+        const f = std.io.getStdErr();
+        f.writer().print(fmt, args) catch {};
+    }
+};
+
 pub fn main() !void {
     var sa = std.posix.Sigaction{
         .handler = .{
@@ -308,7 +418,15 @@ pub fn main() !void {
 
     try std.posix.sigaction(std.posix.SIG.INT, &sa, null);
 
-    const addr = std.net.Address.initIp4(.{ 127, 0, 0, 1 }, 8000);
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer _ = gpa.deinit();
+
+    const alloc = gpa.allocator();
+
+    var args = try Args.parse(alloc);
+    defer args.deinit();
+
+    const addr = std.net.Address.initIp4(.{ 127, 0, 0, 1 }, args.port);
     var tcp_server = try addr.listen(.{
         .reuse_address = true,
         .reuse_port = true,
@@ -357,7 +475,7 @@ pub fn main() !void {
         const ball = simulation_ctx.ball;
         const collision_objects = simulation_ctx.collision_objects;
         simulation_ctx.mutex.unlock();
-        handleConnection(connection, &ball, &collision_objects) catch |e| {
+        handleConnection(args.www_root, connection, &ball, &collision_objects) catch |e| {
             std.log.err("Failed to handle connection: {any}", .{e});
         };
     }
