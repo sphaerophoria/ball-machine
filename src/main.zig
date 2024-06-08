@@ -36,13 +36,24 @@ pub fn pathToContentType(path: []const u8) ![]const u8 {
     return error.Unimplemented;
 }
 
-pub fn getResource(root: []const u8, path: []const u8) !std.fs.File {
+pub fn getResource(alloc: Allocator, root: []const u8, path: []const u8) !std.fs.File {
     var dir = try std.fs.cwd().openDir(root, .{});
     defer dir.close();
-    return dir.openFile(path[1..], .{});
+
+    const real_path = try dir.realpathAlloc(alloc, path[1..]);
+    defer alloc.free(real_path);
+
+    const root_real_path = try std.fs.realpathAlloc(alloc, root);
+    defer alloc.free(root_real_path);
+
+    if (!std.mem.startsWith(u8, real_path, root_real_path)) {
+        return error.InvalidPath;
+    }
+
+    return std.fs.openFileAbsolute(real_path, .{});
 }
 
-pub fn handleConnection(www_root: ?[]const u8, connection: std.net.Server.Connection, ball: *const Ball, collision_objects: []const Surface) !void {
+pub fn handleConnection(alloc: Allocator, www_root: ?[]const u8, connection: std.net.Server.Connection, ball: *const Ball, collision_objects: []const Surface) !void {
     var read_buffer: [4096]u8 = undefined;
     var http_server = std.http.Server.init(connection, &read_buffer);
 
@@ -80,7 +91,7 @@ pub fn handleConnection(www_root: ?[]const u8, connection: std.net.Server.Connec
     });
 
     if (www_root) |root| {
-        if (getResource(root, req.head.target)) |f| {
+        if (getResource(alloc, root, req.head.target)) |f| {
             var fifo = std.fifo.LinearFifo(u8, .{ .Static = 4096 }).init();
             try fifo.pump(f.reader(), response.writer());
             try response.end();
@@ -484,7 +495,7 @@ pub fn main() !void {
         const ball = simulation_ctx.ball;
         const collision_objects = simulation_ctx.collision_objects;
         simulation_ctx.mutex.unlock();
-        handleConnection(args.www_root, connection, &ball, &collision_objects) catch |e| {
+        handleConnection(alloc, args.www_root, connection, &ball, &collision_objects) catch |e| {
             std.log.err("Failed to handle connection: {any}", .{e});
         };
     }
