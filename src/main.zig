@@ -313,10 +313,10 @@ const Simulation = struct {
     }
 };
 
-pub fn runSimulation(ctx: *Simulation) !void {
+pub fn runSimulation(ctx: *Simulation, shutdown: *std.atomic.Value(bool)) !void {
     var last = try std.time.Instant.now();
 
-    while (true) {
+    while (!shutdown.load(.unordered)) {
         std.time.sleep(1_666_666);
         const now = try std.time.Instant.now();
         const delta_ns: f32 = @floatFromInt(now.since(last));
@@ -482,8 +482,10 @@ pub fn main() !void {
         },
     };
 
-    const thread = try std.Thread.spawn(.{}, runSimulation, .{&simulation_ctx});
-    thread.detach();
+    var shutdown = std.atomic.Value(bool).init(false);
+    const thread = try std.Thread.spawn(.{}, runSimulation, .{ &simulation_ctx, &shutdown });
+    defer thread.join();
+    defer shutdown.store(true, .unordered);
 
     while (true) {
         var fds: [1]std.posix.pollfd = .{.{ .fd = tcp_server.stream.handle, .events = std.posix.POLL.IN, .revents = 0 }};
