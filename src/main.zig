@@ -10,7 +10,7 @@ const Surface = physics.Surface;
 
 const ball_start_x = 0.5;
 const ball_start_y = 0.7;
-const ball_radius = 0.03;
+const ball_radius = 0.025;
 
 fn embeddedLookup(path: []const u8) ![]const u8 {
     const path_rel = path[1..];
