@@ -61,7 +61,7 @@ pub fn getResource(alloc: Allocator, root: []const u8, path: []const u8) !std.fs
     return std.fs.openFileAbsolute(real_path, .{});
 }
 
-pub fn handleConnection(alloc: Allocator, www_root: ?[]const u8, connection: std.net.Server.Connection, ball: *const Ball, chamber_state: []const u8) !void {
+pub fn handleConnection(alloc: Allocator, www_root: ?[]const u8, connection: std.net.Server.Connection, simulation: *Simulation) !void {
     var read_buffer: [4096]u8 = undefined;
     var http_server = std.http.Server.init(connection, &read_buffer);
 
@@ -71,6 +71,15 @@ pub fn handleConnection(alloc: Allocator, www_root: ?[]const u8, connection: std
         const ResponseJson = struct {
             ball: Ball,
             chamber_state: []const u8,
+        };
+
+        const response_content = blk: {
+            simulation.mutex.lock();
+            defer simulation.mutex.unlock();
+            break :blk ResponseJson{
+                .ball = simulation.ball,
+                .chamber_state = &chamber.save(simulation.chamber_state),
+            };
         };
         var send_buffer: [4096]u8 = undefined;
         var response = req.respondStreaming(.{
@@ -82,8 +91,14 @@ pub fn handleConnection(alloc: Allocator, www_root: ?[]const u8, connection: std
                 }},
             },
         });
-        try std.json.stringify(ResponseJson{ .ball = ball.*, .chamber_state = chamber_state }, .{ .emit_strings_as_arrays = true }, response.writer());
+        try std.json.stringify(response_content, .{ .emit_strings_as_arrays = true }, response.writer());
         try response.end();
+        return;
+    } else if (std.mem.eql(u8, req.head.target, "/save")) {
+        simulation.mutex.lock();
+        defer simulation.mutex.unlock();
+        try simulation.history.save("history.json");
+        try req.respond("", .{});
         return;
     }
 
@@ -114,12 +129,74 @@ pub fn handleConnection(alloc: Allocator, www_root: ?[]const u8, connection: std
     try response.end();
 }
 
+const SimulationSnapshot = struct {
+    ball: Ball,
+    num_steps_taken: u64,
+    chamber_state: [20]u8,
+    prng: std.Random.DefaultPrng,
+};
+
+const SimulationHistory = struct {
+    const num_elems = 600;
+    history: [num_elems]SimulationSnapshot = undefined,
+    head: usize = 0,
+    tail: usize = 0,
+
+    pub fn push(self: *SimulationHistory, simulation: *Simulation) void {
+        self.history[self.tail] = .{
+            .ball = simulation.ball,
+            .num_steps_taken = simulation.num_steps_taken,
+            .chamber_state = chamber.save(simulation.chamber_state),
+            .prng = simulation.prng,
+        };
+        self.tail += 1;
+        self.tail %= num_elems;
+        if (self.tail == self.head) {
+            self.head += 1;
+            self.head %= num_elems;
+        }
+    }
+
+    pub fn save(self: *SimulationHistory, path: []const u8) !void {
+        var output = try std.fs.cwd().createFile(path, .{});
+        defer output.close();
+
+        var buf_writer = std.io.bufferedWriter(output.writer());
+        defer buf_writer.flush() catch {};
+
+        var json_writer = std.json.writeStream(buf_writer.writer(), .{
+            .whitespace = .indent_2,
+        });
+        try json_writer.beginArray();
+
+        if (self.head <= self.tail) {
+            for (self.head..self.tail) |i| {
+                try json_writer.write(self.history[i]);
+            }
+        } else {
+            for (self.head..num_elems) |i| {
+                try json_writer.write(self.history[i]);
+            }
+
+            for (0..self.tail) |i| {
+                try json_writer.write(self.history[i]);
+            }
+        }
+
+        try json_writer.endArray();
+    }
+};
+
 const Simulation = struct {
     mutex: std.Thread.Mutex,
     ball: Ball,
     prng: std.rand.DefaultPrng,
     chamber_state: *chamber.State,
-    duration: f32,
+    history: SimulationHistory,
+    num_steps_taken: u64,
+
+    const step_len_ns = 1_666_666;
+    const step_len_s: f32 = @as(f32, @floatFromInt(step_len_ns)) / 1_000_000_000;
 
     fn applyGravity(ball: *Ball, delta: f32) void {
         const G = -9.832;
@@ -145,30 +222,38 @@ const Simulation = struct {
         ball.pos.y = @mod(ball.pos.y, 1.0);
     }
 
-    fn step(self: *Simulation, delta: f32) void {
+    fn step(self: *Simulation) void {
         self.mutex.lock();
         defer self.mutex.unlock();
 
-        self.duration += delta;
+        self.num_steps_taken += 1;
 
-        applyGravity(&self.ball, delta);
+        applyGravity(&self.ball, step_len_s);
         clampSpeed(&self.ball);
-        applyVelocity(&self.ball, delta);
-        chamber.step(self.chamber_state, &self.ball, delta);
+        applyVelocity(&self.ball, step_len_s);
+        chamber.step(self.chamber_state, &self.ball, step_len_s);
         applyWrap(&self.ball);
+
+        if (self.num_steps_taken % 10 == 0) {
+            self.history.push(self);
+        }
     }
 };
 
 pub fn runSimulation(ctx: *Simulation, shutdown: *std.atomic.Value(bool)) !void {
-    var last = try std.time.Instant.now();
-
+    const start = try std.time.Instant.now();
+    const initial_step = ctx.num_steps_taken;
     while (!shutdown.load(.unordered)) {
         std.time.sleep(1_666_666);
+
         const now = try std.time.Instant.now();
-        const delta_ns: f32 = @floatFromInt(now.since(last));
-        const delta_s = delta_ns / 1e9;
-        ctx.step(delta_s);
-        last = now;
+        const elapsed_time_ns = now.since(start);
+
+        const desired_num_steps_taken = initial_step + elapsed_time_ns / Simulation.step_len_ns;
+
+        while (ctx.num_steps_taken < desired_num_steps_taken) {
+            ctx.step();
+        }
     }
 }
 
@@ -177,11 +262,14 @@ fn signal_handler(_: c_int) align(1) callconv(.C) void {}
 const Args = struct {
     www_root: ?[]const u8,
     port: u16,
+    history_file: ?[]const u8,
+    history_start_idx: usize,
     it: std.process.ArgIterator,
 
     const Option = enum {
         @"--www-root",
         @"--port",
+        @"--load",
         @"--help",
     };
 
@@ -191,6 +279,8 @@ const Args = struct {
 
         var www_root: ?[]const u8 = null;
         var port: ?u16 = null;
+        var history_file: ?[]const u8 = null;
+        var history_start_idx: usize = 0;
 
         while (it.next()) |arg| {
             const option = std.meta.stringToEnum(Option, arg) orelse {
@@ -200,6 +290,22 @@ const Args = struct {
             switch (option) {
                 .@"--www-root" => {
                     www_root = it.next();
+                },
+                .@"--load" => {
+                    history_file = it.next() orelse {
+                        print("--load provided with no history file\n", .{});
+                        help(process_name);
+                    };
+
+                    const history_start_idx_s = it.next() orelse {
+                        print("--load provided with no history idx\n", .{});
+                        help(process_name);
+                    };
+
+                    history_start_idx = std.fmt.parseInt(usize, history_start_idx_s, 10) catch {
+                        print("history start index is not a valid usize\n", .{});
+                        help(process_name);
+                    };
                 },
                 .@"--port" => {
                     const port_s = it.next() orelse {
@@ -223,6 +329,8 @@ const Args = struct {
                 print("--port not provied\n", .{});
                 help(process_name);
             },
+            .history_file = history_file,
+            .history_start_idx = history_start_idx,
             .it = it,
         };
     }
@@ -245,6 +353,9 @@ const Args = struct {
             switch (option_val) {
                 .@"--www-root" => {
                     print("Optional, where to serve html from", .{});
+                },
+                .@"--load" => {
+                    print("Optional (--load history.json idx), history file + index of where to start simulation", .{});
                 },
                 .@"--port" => {
                     print("Which port to run the webserver on", .{});
@@ -291,7 +402,7 @@ pub fn main() !void {
 
     var simulation_ctx = Simulation{
         .mutex = std.Thread.Mutex{},
-        .duration = 0.0,
+        .num_steps_taken = 0,
         .ball = Ball{
             .pos = .{
                 .x = ball_start_x,
@@ -304,10 +415,39 @@ pub fn main() !void {
             },
         },
         .prng = std.rand.DefaultPrng.init(@intCast(std.time.timestamp())),
+        .history = SimulationHistory{},
         .chamber_state = chamber.init() orelse {
             return error.InternalError;
         },
     };
+
+    if (args.history_file) |history_file_path| {
+        const f = try std.fs.cwd().openFile(history_file_path, .{});
+        var json_reader = std.json.reader(alloc, f.reader());
+        defer json_reader.deinit();
+
+        const parsed = try std.json.parseFromTokenSource(std.json.Value, alloc, &json_reader, .{});
+        defer parsed.deinit();
+
+        if (parsed.value != .array) {
+            return error.InvalidRecording;
+        }
+
+        if (args.history_start_idx >= parsed.value.array.items.len) {
+            return error.InvalidStartIdx;
+        }
+
+        const val = parsed.value.array.items[args.history_start_idx];
+        const parsed_snapshot = try std.json.parseFromValue(SimulationSnapshot, alloc, val, .{});
+        defer parsed_snapshot.deinit();
+
+        simulation_ctx.prng = parsed_snapshot.value.prng;
+        simulation_ctx.ball = parsed_snapshot.value.ball;
+        simulation_ctx.num_steps_taken = parsed_snapshot.value.num_steps_taken;
+        var chamber_save: []const u8 = &parsed_snapshot.value.chamber_state;
+        chamber.deinit(simulation_ctx.chamber_state);
+        simulation_ctx.chamber_state = chamber.load(&chamber_save).?;
+    }
 
     var shutdown = std.atomic.Value(bool).init(false);
     const thread = try std.Thread.spawn(.{}, runSimulation, .{ &simulation_ctx, &shutdown });
@@ -320,11 +460,7 @@ pub fn main() !void {
         const connection = try tcp_server.accept();
         defer connection.stream.close();
 
-        simulation_ctx.mutex.lock();
-        const ball = simulation_ctx.ball;
-        const chamber_state = chamber.save(simulation_ctx.chamber_state);
-        simulation_ctx.mutex.unlock();
-        handleConnection(alloc, args.www_root, connection, &ball, &chamber_state) catch |e| {
+        handleConnection(alloc, args.www_root, connection, &simulation_ctx) catch |e| {
             std.log.err("Failed to handle connection: {any}", .{e});
         };
     }

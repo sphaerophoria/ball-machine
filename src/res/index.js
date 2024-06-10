@@ -86,6 +86,8 @@ async function render() {
 }
 
 async function init() {
+  const save_button = document.getElementById("save");
+  save_button.onclick = () => fetch("/save");
   const importObj = {
     env: { logWasm: wasmLog },
   };
