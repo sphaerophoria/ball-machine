@@ -107,7 +107,7 @@ pub export fn logState(state: *State) void {
     }
 }
 
-pub export fn step(state: *State, ball: *Ball, delta: f32) void {
+pub fn step(state: *State, balls: []Ball, delta: f32) void {
     const speed = 1.0;
     for (0..num_platforms) |i| {
         var movement = speed * delta;
@@ -131,13 +131,15 @@ pub export fn step(state: *State, ball: *Ball, delta: f32) void {
         };
 
         const obj_normal = obj.normal();
-        const ball_collision_point_offs = obj_normal.mul(-ball.r);
-        const ball_collision_point = ball.pos.add(ball_collision_point_offs);
+        for (balls) |*ball| {
+            const ball_collision_point_offs = obj_normal.mul(-ball.r);
+            const ball_collision_point = ball.pos.add(ball_collision_point_offs);
 
-        const resolution = obj.collisionResolution(ball_collision_point, ball.velocity.mul(delta));
-        if (resolution) |r| {
-            ball.velocity.x += (movement / delta - ball.velocity.x) * 0.3;
-            physics.applyCollision(ball, r, obj_normal, delta);
+            const resolution = obj.collisionResolution(ball_collision_point, ball.velocity.mul(delta));
+            if (resolution) |r| {
+                ball.velocity.x += (movement / delta - ball.velocity.x) * 0.3;
+                physics.applyCollision(ball, r, obj_normal, delta);
+            }
         }
         state.platform_locs[i] += movement;
         state.platform_locs[i] = @mod(state.platform_locs[i], 2.0);
@@ -147,8 +149,53 @@ pub export fn step(state: *State, ball: *Ball, delta: f32) void {
             state.platform_locs[i] = 2.0 - state.platform_locs[i];
         }
     }
-}
 
+    const walls: [3]Surface = .{
+        .{
+            .a = .{
+                .x = 0.0,
+                .y = 1.0,
+            },
+            .b = .{
+                .x = 0.0,
+                .y = 0.0,
+            },
+        },
+        .{
+            .a = .{
+                .x = 0.0,
+                .y = 0.0,
+            },
+            .b = .{
+                .x = 1.0,
+                .y = 0.0,
+            },
+        },
+        .{
+            .a = .{
+                .x = 1.0,
+                .y = 0.0,
+            },
+            .b = .{
+                .x = 1.0,
+                .y = 0.0,
+            },
+        },
+    };
+
+    for (walls) |wall| {
+        for (balls) |*ball| {
+            const obj_normal = wall.normal();
+            const ball_collision_point_offs = obj_normal.mul(-ball.r);
+            const ball_collision_point = ball.pos.add(ball_collision_point_offs);
+
+            const resolution = wall.collisionResolution(ball_collision_point, ball.velocity.mul(delta));
+            if (resolution) |r| {
+                physics.applyCollision(ball, r, obj_normal, delta);
+            }
+        }
+    }
+}
 pub export fn alloc(size: usize) ?*[]u8 {
     const ret_slice = plugin_alloc.alloc(u8, size) catch {
         return null;

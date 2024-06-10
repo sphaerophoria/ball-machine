@@ -42,6 +42,13 @@ pub const Vec2 = struct {
         };
     }
 
+    pub fn sub(a: Vec2, b: Vec2) Vec2 {
+        return .{
+            .x = a.x - b.x,
+            .y = a.y - b.y,
+        };
+    }
+
     pub fn mul(self: Vec2, val: f32) Vec2 {
         return .{
             .x = self.x * val,
@@ -139,14 +146,33 @@ fn pointWithinLineBounds(p: Pos2, a: Pos2, b: Pos2) bool {
     return within_x_bounds or within_y_bounds;
 }
 
+const ball_elasticity_multiplier = 0.85;
+
 pub fn applyCollision(ball: *Ball, resolution: Vec2, obj_normal: Vec2, delta: f32) void {
     const vel_ground_proj_mag = ball.velocity.dot(obj_normal);
     const vel_adjustment = obj_normal.mul(-vel_ground_proj_mag * 2);
 
     ball.velocity = ball.velocity.add(vel_adjustment);
-    const lost_velocity = 0.15 * (@abs(obj_normal.dot(ball.velocity.normalized())));
+    const lost_velocity = (1.0 - ball_elasticity_multiplier) * (@abs(obj_normal.dot(ball.velocity.normalized())));
     ball.velocity = ball.velocity.mul(1.0 - lost_velocity);
 
     ball.pos = ball.pos.add(resolution);
     ball.pos = ball.pos.add(ball.velocity.mul(delta));
+}
+
+pub fn applyBallCollision(a: *Ball, b: *Ball) void {
+    const n = b.pos.sub(a.pos).normalized();
+    const vel_diff = a.velocity.sub(b.velocity);
+    const change_in_velocity = n.mul(vel_diff.dot(n));
+
+    a.velocity = a.velocity.sub(change_in_velocity).mul(ball_elasticity_multiplier);
+    // NOTE: This only works because a and b have the same mass
+    b.velocity = b.velocity.add(change_in_velocity).mul(ball_elasticity_multiplier);
+
+    const balls_distance = a.pos.sub(b.pos).length();
+    const overlap = a.r + b.r - balls_distance;
+    if (overlap > 0) {
+        b.pos = b.pos.add(n.mul(overlap / 2.0));
+        a.pos = a.pos.add(n.mul(-overlap / 2.0));
+    }
 }

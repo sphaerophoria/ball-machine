@@ -69,7 +69,7 @@ pub fn handleConnection(alloc: Allocator, www_root: ?[]const u8, connection: std
 
     if (std.mem.eql(u8, req.head.target, "/simulation_state")) {
         const ResponseJson = struct {
-            ball: Ball,
+            balls: [num_balls]Ball,
             chamber_state: []const u8,
         };
 
@@ -77,7 +77,7 @@ pub fn handleConnection(alloc: Allocator, www_root: ?[]const u8, connection: std
             simulation.mutex.lock();
             defer simulation.mutex.unlock();
             break :blk ResponseJson{
-                .ball = simulation.ball,
+                .balls = simulation.balls,
                 .chamber_state = &chamber.save(simulation.chamber_state),
             };
         };
@@ -130,7 +130,7 @@ pub fn handleConnection(alloc: Allocator, www_root: ?[]const u8, connection: std
 }
 
 const SimulationSnapshot = struct {
-    ball: Ball,
+    balls: [num_balls]Ball,
     num_steps_taken: u64,
     chamber_state: [20]u8,
     prng: std.Random.DefaultPrng,
@@ -144,7 +144,7 @@ const SimulationHistory = struct {
 
     pub fn push(self: *SimulationHistory, simulation: *Simulation) void {
         self.history[self.tail] = .{
-            .ball = simulation.ball,
+            .balls = simulation.balls,
             .num_steps_taken = simulation.num_steps_taken,
             .chamber_state = chamber.save(simulation.chamber_state),
             .prng = simulation.prng,
@@ -189,7 +189,7 @@ const SimulationHistory = struct {
 
 const Simulation = struct {
     mutex: std.Thread.Mutex,
-    ball: Ball,
+    balls: [num_balls]Ball,
     prng: std.rand.DefaultPrng,
     chamber_state: *chamber.State,
     history: SimulationHistory,
@@ -228,11 +228,31 @@ const Simulation = struct {
 
         self.num_steps_taken += 1;
 
-        applyGravity(&self.ball, step_len_s);
-        clampSpeed(&self.ball);
-        applyVelocity(&self.ball, step_len_s);
-        chamber.step(self.chamber_state, &self.ball, step_len_s);
-        applyWrap(&self.ball);
+        for (0..self.balls.len) |i| {
+            const ball = &self.balls[i];
+            applyGravity(ball, step_len_s);
+            clampSpeed(ball);
+            applyVelocity(ball, step_len_s);
+            applyWrap(ball);
+        }
+
+        chamber.step(self.chamber_state, &self.balls, step_len_s);
+
+        for (0..self.balls.len) |i| {
+            const ball = &self.balls[i];
+
+            for (i + 1..self.balls.len) |j| {
+                const b = &self.balls[j];
+                const center_dist = b.pos.sub(ball.pos).length();
+                if (center_dist < ball.r + b.r) {
+                    physics.applyBallCollision(ball, b);
+                }
+            }
+        }
+
+        if (self.num_steps_taken % 4800 == 0) {
+            self.balls = makeBalls(&self.prng);
+        }
 
         if (self.num_steps_taken % 10 == 0) {
             self.history.push(self);
@@ -375,6 +395,28 @@ const Args = struct {
     }
 };
 
+const num_balls = 5;
+
+fn makeBalls(rng: *std.Random.DefaultPrng) [num_balls]Ball {
+    var ret: [num_balls]Ball = undefined;
+    var y: f32 = ball_radius * 4;
+    for (0..num_balls) |i| {
+        y += ball_radius * 8;
+        ret[i] = .{
+            .pos = .{
+                .x = rng.random().float(f32) * (1.0 - ball_radius * 2) + ball_radius,
+                .y = y,
+            },
+            .r = ball_radius,
+            .velocity = .{
+                .x = 0,
+                .y = 0,
+            },
+        };
+    }
+    return ret;
+}
+
 pub fn main() !void {
     var sa = std.posix.Sigaction{
         .handler = .{
@@ -400,21 +442,15 @@ pub fn main() !void {
         .reuse_port = true,
     });
 
+    var seed: usize = undefined;
+    try std.posix.getrandom(std.mem.asBytes(&seed));
+    var prng = std.Random.DefaultPrng.init(seed);
+    const balls = makeBalls(&prng);
     var simulation_ctx = Simulation{
         .mutex = std.Thread.Mutex{},
         .num_steps_taken = 0,
-        .ball = Ball{
-            .pos = .{
-                .x = ball_start_x,
-                .y = ball_start_y,
-            },
-            .r = ball_radius,
-            .velocity = .{
-                .x = 0,
-                .y = 0,
-            },
-        },
-        .prng = std.rand.DefaultPrng.init(@intCast(std.time.timestamp())),
+        .prng = prng,
+        .balls = balls,
         .history = SimulationHistory{},
         .chamber_state = chamber.init() orelse {
             return error.InternalError;
@@ -442,7 +478,7 @@ pub fn main() !void {
         defer parsed_snapshot.deinit();
 
         simulation_ctx.prng = parsed_snapshot.value.prng;
-        simulation_ctx.ball = parsed_snapshot.value.ball;
+        simulation_ctx.balls = parsed_snapshot.value.balls;
         simulation_ctx.num_steps_taken = parsed_snapshot.value.num_steps_taken;
         var chamber_save: []const u8 = &parsed_snapshot.value.chamber_state;
         chamber.deinit(simulation_ctx.chamber_state);
