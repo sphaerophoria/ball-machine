@@ -75,54 +75,99 @@ fn respondWithFileContents(req: *std.http.Server.Request, path: []const u8) !voi
     return;
 }
 
-pub fn handleConnection(alloc: Allocator, www_root: ?[]const u8, chamber_path: []const u8, connection: std.net.Server.Connection, simulation: *Simulation) !void {
+const UrlComponents = struct {
+    id: usize,
+    target: []const u8,
+};
+
+fn isTaggedRequest(target: []const u8) ?UrlComponents {
+    if (target.len < 1 or target[0] != '/') {
+        return null;
+    }
+
+    var end = std.mem.indexOfScalar(u8, target[1..], '/') orelse {
+        return null;
+    };
+    end += 1;
+
+    const id = std.fmt.parseInt(usize, target[1..end], 10) catch {
+        return null;
+    };
+
+    return .{
+        .id = id,
+        .target = target[end..],
+    };
+}
+
+pub fn handleConnection(alloc: Allocator, www_root: ?[]const u8, chamber_paths: []const []const u8, connection: std.net.Server.Connection, simulations: []Simulation) !void {
     var read_buffer: [4096]u8 = undefined;
     var http_server = std.http.Server.init(connection, &read_buffer);
 
     var req = try http_server.receiveHead();
 
-    if (std.mem.eql(u8, req.head.target, "/simulation_state")) {
-        const ResponseJson = struct {
-            balls: [Simulation.num_balls]Ball,
-            chamber_state: []const u8,
-        };
+    if (std.mem.eql(u8, req.head.target, "/num_simulations")) {
+        var buf: [6]u8 = undefined;
+        const num_sims_s = try std.fmt.bufPrint(&buf, "{d}", .{simulations.len});
+        try req.respond(num_sims_s, .{
+            .extra_headers = &.{.{
+                .name = "Content-Type",
+                .value = "application/json",
+            }},
+        });
+        return;
+    }
 
-        var chamber_save: []const u8 = &.{};
-        defer alloc.free(chamber_save);
+    if (isTaggedRequest(req.head.target)) |tagged_url| {
+        if (tagged_url.id >= simulations.len) {
+            return error.InvalidId;
+        }
+        const simulation = &simulations[tagged_url.id];
+        const target = tagged_url.target;
 
-        const response_content = blk: {
+        if (std.mem.eql(u8, target, "/simulation_state")) {
+            const ResponseJson = struct {
+                balls: [Simulation.num_balls]Ball,
+                chamber_state: []const u8,
+            };
+
+            var chamber_save: []const u8 = &.{};
+            defer alloc.free(chamber_save);
+
+            const response_content = blk: {
+                simulation.mutex.lock();
+                defer simulation.mutex.unlock();
+
+                chamber_save = try simulation.chamber_mod.save(alloc, simulation.chamber_state);
+
+                break :blk ResponseJson{
+                    .balls = simulation.balls,
+                    .chamber_state = chamber_save,
+                };
+            };
+            var send_buffer: [4096]u8 = undefined;
+            var response = req.respondStreaming(.{
+                .send_buffer = &send_buffer,
+                .respond_options = .{
+                    .extra_headers = &.{.{
+                        .name = "Content-Type",
+                        .value = "application/json",
+                    }},
+                },
+            });
+            try std.json.stringify(response_content, .{ .emit_strings_as_arrays = true }, response.writer());
+            try response.end();
+            return;
+        } else if (std.mem.eql(u8, target, "/save")) {
             simulation.mutex.lock();
             defer simulation.mutex.unlock();
-
-            chamber_save = try simulation.chamber_mod.save(alloc, simulation.chamber_state);
-
-            break :blk ResponseJson{
-                .balls = simulation.balls,
-                .chamber_state = chamber_save,
-            };
-        };
-        var send_buffer: [4096]u8 = undefined;
-        var response = req.respondStreaming(.{
-            .send_buffer = &send_buffer,
-            .respond_options = .{
-                .extra_headers = &.{.{
-                    .name = "Content-Type",
-                    .value = "application/json",
-                }},
-            },
-        });
-        try std.json.stringify(response_content, .{ .emit_strings_as_arrays = true }, response.writer());
-        try response.end();
-        return;
-    } else if (std.mem.eql(u8, req.head.target, "/save")) {
-        simulation.mutex.lock();
-        defer simulation.mutex.unlock();
-        try simulation.history.save("history.json");
-        try req.respond("", .{});
-        return;
-    } else if (std.mem.eql(u8, req.head.target, "/chamber.wasm")) {
-        try respondWithFileContents(&req, chamber_path);
-        return;
+            try simulation.history.save("history.json");
+            try req.respond("", .{});
+            return;
+        } else if (std.mem.eql(u8, target, "/chamber.wasm")) {
+            try respondWithFileContents(&req, chamber_paths[tagged_url.id]);
+            return;
+        }
     }
 
     if (www_root) |root| {
@@ -150,9 +195,12 @@ pub fn handleConnection(alloc: Allocator, www_root: ?[]const u8, chamber_path: [
     try response.end();
 }
 
-pub fn runSimulation(ctx: *Simulation, shutdown: *std.atomic.Value(bool)) !void {
+pub fn runSimulation(simulations: []Simulation, shutdown: *std.atomic.Value(bool)) !void {
     const start = try std.time.Instant.now();
-    const initial_step = ctx.num_steps_taken;
+
+    const initial_step = simulations[0].num_steps_taken;
+    std.debug.assert(simulations.len == 1 or initial_step == 0);
+
     while (!shutdown.load(.unordered)) {
         std.time.sleep(1_666_666);
 
@@ -161,8 +209,10 @@ pub fn runSimulation(ctx: *Simulation, shutdown: *std.atomic.Value(bool)) !void 
 
         const desired_num_steps_taken = initial_step + elapsed_time_ns / Simulation.step_len_ns;
 
-        while (ctx.num_steps_taken < desired_num_steps_taken) {
-            ctx.step();
+        for (simulations) |*ctx| {
+            while (ctx.num_steps_taken < desired_num_steps_taken) {
+                ctx.step();
+            }
         }
     }
 }
@@ -170,7 +220,8 @@ pub fn runSimulation(ctx: *Simulation, shutdown: *std.atomic.Value(bool)) !void 
 fn signal_handler(_: c_int) align(1) callconv(.C) void {}
 
 const Args = struct {
-    chamber: []const u8,
+    alloc: Allocator,
+    chambers: []const []const u8,
     www_root: ?[]const u8,
     port: u16,
     history_file: ?[]const u8,
@@ -193,7 +244,8 @@ const Args = struct {
         var port: ?u16 = null;
         var history_file: ?[]const u8 = null;
         var history_start_idx: usize = 0;
-        var chamber: ?[]const u8 = null;
+        var chambers = std.ArrayList([]const u8).init(alloc);
+        errdefer chambers.deinit();
 
         while (it.next()) |arg| {
             const option = std.meta.stringToEnum(Option, arg) orelse {
@@ -202,10 +254,11 @@ const Args = struct {
             };
             switch (option) {
                 .@"--chamber" => {
-                    chamber = it.next() orelse {
+                    const chamber = it.next() orelse {
                         print("--chamber provided with no argument\n", .{});
                         help(process_name);
                     };
+                    try chambers.append(chamber);
                 },
                 .@"--www-root" => {
                     www_root = it.next();
@@ -242,11 +295,19 @@ const Args = struct {
             }
         }
 
+        if (chambers.items.len == 0) {
+            print("--chamber not provied\n", .{});
+            help(process_name);
+        }
+
+        if (chambers.items.len > 1 and history_file != null) {
+            print("--load can only be used with a single chamber", .{});
+            help(process_name);
+        }
+
         return .{
-            .chamber = chamber orelse {
-                print("--chamber not provied\n", .{});
-                help(process_name);
-            },
+            .alloc = alloc,
+            .chambers = try chambers.toOwnedSlice(),
             .www_root = www_root,
             .port = port orelse {
                 print("--port not provied\n", .{});
@@ -259,6 +320,7 @@ const Args = struct {
     }
 
     pub fn deinit(self: *Args) void {
+        self.alloc.free(self.chambers);
         self.it.deinit();
     }
 
@@ -275,7 +337,7 @@ const Args = struct {
             const option_val: Option = @enumFromInt(option.value);
             switch (option_val) {
                 .@"--chamber" => {
-                    print("Which chamber to run", .{});
+                    print("Which chamber to run, can be provided multiple times for multiple chambers", .{});
                 },
                 .@"--www-root" => {
                     print("Optional, where to serve html from", .{});
@@ -328,30 +390,54 @@ pub fn main() !void {
 
     var wasm_loader = try wasm_chamber.WasmLoader.init();
     defer wasm_loader.deinit();
-
-    const chamber_f = try std.fs.cwd().openFile(args.chamber, .{});
-    defer chamber_f.close();
-    const chamber_content = try chamber_f.readToEndAlloc(alloc, 1_000_000);
-    defer alloc.free(chamber_content);
-
-    var chamber_mod = try wasm_loader.load(alloc, chamber_content);
-    defer chamber_mod.deinit();
-
-    var simulation_ctx: Simulation = undefined;
-
-    if (args.history_file) |history_file_path| {
-        simulation_ctx = try Simulation.initFromHistory(alloc, chamber_mod, history_file_path, args.history_start_idx);
-    } else {
-        var seed: usize = undefined;
-        try std.posix.getrandom(std.mem.asBytes(&seed));
-
-        simulation_ctx = try Simulation.init(alloc, seed, chamber_mod);
+    var chamber_mods = std.ArrayList(wasm_chamber.WasmChamber).init(alloc);
+    defer {
+        for (chamber_mods.items) |*chamber_mod| {
+            chamber_mod.deinit();
+        }
+        chamber_mods.deinit();
     }
 
-    defer simulation_ctx.deinit();
+    for (args.chambers) |chamber_path| {
+        const chamber_f = try std.fs.cwd().openFile(chamber_path, .{});
+        defer chamber_f.close();
+        const chamber_content = try chamber_f.readToEndAlloc(alloc, 1_000_000);
+        defer alloc.free(chamber_content);
+
+        var chamber = try wasm_loader.load(alloc, chamber_content);
+        errdefer chamber.deinit();
+
+        try chamber_mods.append(chamber);
+    }
+
+    var simulations = std.ArrayList(Simulation).init(alloc);
+    defer {
+        for (simulations.items) |*sim| {
+            sim.deinit();
+        }
+        simulations.deinit();
+    }
+
+    for (chamber_mods.items) |chamber_mod| {
+        if (args.history_file) |history_file_path| {
+            std.debug.assert(chamber_mods.items.len == 1);
+            var simulation_ctx = try Simulation.initFromHistory(alloc, chamber_mod, history_file_path, args.history_start_idx);
+            errdefer simulation_ctx.deinit();
+
+            try simulations.append(simulation_ctx);
+        } else {
+            var seed: usize = undefined;
+            try std.posix.getrandom(std.mem.asBytes(&seed));
+
+            var simulation_ctx = try Simulation.init(alloc, seed, chamber_mod);
+            errdefer simulation_ctx.deinit();
+
+            try simulations.append(simulation_ctx);
+        }
+    }
 
     var shutdown = std.atomic.Value(bool).init(false);
-    const thread = try std.Thread.spawn(.{}, runSimulation, .{ &simulation_ctx, &shutdown });
+    const thread = try std.Thread.spawn(.{}, runSimulation, .{ simulations.items, &shutdown });
     defer thread.join();
     defer shutdown.store(true, .unordered);
 
@@ -361,7 +447,7 @@ pub fn main() !void {
         const connection = try tcp_server.accept();
         defer connection.stream.close();
 
-        handleConnection(alloc, args.www_root, args.chamber, connection, &simulation_ctx) catch |e| {
+        handleConnection(alloc, args.www_root, args.chambers, connection, simulations.items) catch |e| {
             std.log.err("Failed to handle connection: {any}", .{e});
         };
     }

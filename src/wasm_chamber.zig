@@ -10,52 +10,48 @@ const c = @cImport({
 
 pub const WasmLoader = struct {
     engine: *c.wasm_engine_t,
-    store: *c.wasmtime_store_t,
-    context: *c.wasmtime_context_t,
 
     pub fn init() !WasmLoader {
         const engine = c.wasm_engine_new() orelse {
             return error.InitFailure;
         };
-        const store = c.wasmtime_store_new(engine, null, null) orelse {
+
+        return .{
+            .engine = engine,
+        };
+    }
+
+    pub fn deinit(self: *WasmLoader) void {
+        c.wasm_engine_delete(self.engine);
+    }
+
+    pub fn load(self: *WasmLoader, alloc: Allocator, data: []const u8) !WasmChamber {
+        const store = c.wasmtime_store_new(self.engine, null, null) orelse {
             return error.InitFailure;
         };
         const context = c.wasmtime_store_context(store) orelse {
             return error.InitFailure;
         };
-
-        return .{
-            .engine = engine,
-            .store = store,
-            .context = context,
-        };
-    }
-
-    pub fn deinit(self: *WasmLoader) void {
-        c.wasmtime_store_delete(self.store);
-        c.wasm_engine_delete(self.engine);
-    }
-
-    pub fn load(self: *WasmLoader, alloc: Allocator, data: []const u8) !WasmChamber {
         const module = try makeModuleFromData(data, self.engine);
         defer c.wasmtime_module_delete(module);
         const memory: *c.wasmtime_memory_t = try alloc.create(c.wasmtime_memory_t);
         errdefer alloc.destroy(memory);
 
-        var instance = try makeInstance(self.context, module, memory);
-        memory.* = try loadWasmMemory(self.context, &instance);
-        const init_fn = try loadWasmFn("init", self.context, &instance);
-        const alloc_fn = try loadWasmFn("alloc", self.context, &instance);
-        const free_fn = try loadWasmFn("free", self.context, &instance);
-        const step_fn = try loadWasmFn("step", self.context, &instance);
-        const save_fn = try loadWasmFn("save", self.context, &instance);
-        const save_size_fn = try loadWasmFn("saveSize", self.context, &instance);
-        const load_fn = try loadWasmFn("load", self.context, &instance);
-        const deinit_fn = try loadWasmFn("deinit", self.context, &instance);
+        var instance = try makeInstance(context, module, memory);
+        memory.* = try loadWasmMemory(context, &instance);
+        const init_fn = try loadWasmFn("init", context, &instance);
+        const alloc_fn = try loadWasmFn("alloc", context, &instance);
+        const free_fn = try loadWasmFn("free", context, &instance);
+        const step_fn = try loadWasmFn("step", context, &instance);
+        const save_fn = try loadWasmFn("save", context, &instance);
+        const save_size_fn = try loadWasmFn("saveSize", context, &instance);
+        const load_fn = try loadWasmFn("load", context, &instance);
+        const deinit_fn = try loadWasmFn("deinit", context, &instance);
 
         return .{
             .alloc = alloc,
-            .context = self.context,
+            .store = store,
+            .context = context,
             .instance = instance,
             .memory = memory,
             .init_fn = init_fn,
@@ -71,6 +67,7 @@ pub const WasmLoader = struct {
 };
 pub const WasmChamber = struct {
     alloc: Allocator,
+    store: *c.wasmtime_store_t,
     context: *c.wasmtime_context_t,
     instance: c.wasmtime_instance_t,
     memory: *c.wasmtime_memory_t,
@@ -85,6 +82,7 @@ pub const WasmChamber = struct {
 
     pub fn deinit(self: *WasmChamber) void {
         self.alloc.destroy(self.memory);
+        c.wasmtime_store_delete(self.store);
     }
 
     pub fn initChamber(self: *WasmChamber) !i32 {
