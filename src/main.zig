@@ -69,24 +69,31 @@ pub fn handleConnection(alloc: Allocator, www_root: ?[]const u8, connection: std
     var req = try http_server.receiveHead();
 
     if (std.mem.eql(u8, req.head.target, "/simulation_state")) {
-        const ResponseJson = struct {
-            balls: [num_balls]Ball,
+        const ResponseJson = [2]struct {
+            balls: []Ball,
             chamber_state: []const u8,
         };
 
-        var chamber_save: []const u8 = &.{};
-        defer alloc.free(chamber_save);
+        var chamber_save_1: []const u8 = &.{};
+        defer alloc.free(chamber_save_1);
+
+        var chamber_save_2: []const u8 = &.{};
+        defer alloc.free(chamber_save_2);
 
         const response_content = blk: {
             simulation.mutex.lock();
             defer simulation.mutex.unlock();
 
-            chamber_save = try simulation.chamber_mod.save(alloc, simulation.chamber_state);
+            chamber_save_1 = try simulation.chamber_mod[0].save(alloc, simulation.chamber_state[0]);
+            chamber_save_2 = try simulation.chamber_mod[1].save(alloc, simulation.chamber_state[1]);
 
-            break :blk ResponseJson{
-                .balls = simulation.balls,
-                .chamber_state = chamber_save,
-            };
+            break :blk ResponseJson{ .{
+                .balls = simulation.balls[0 .. num_balls / 2],
+                .chamber_state = chamber_save_1,
+            }, .{
+                .balls = simulation.balls[num_balls / 2 .. num_balls],
+                .chamber_state = chamber_save_2,
+            } };
         };
         var send_buffer: [4096]u8 = undefined;
         var response = req.respondStreaming(.{
@@ -139,7 +146,7 @@ pub fn handleConnection(alloc: Allocator, www_root: ?[]const u8, connection: std
 const SimulationSnapshot = struct {
     balls: [num_balls]Ball,
     num_steps_taken: u64,
-    chamber_save: []const u8,
+    //chamber_save: []const u8,
     prng: std.Random.DefaultPrng,
 };
 
@@ -172,23 +179,24 @@ const SimulationHistory = struct {
         self.history[self.tail] = .{
             .balls = simulation.balls,
             .num_steps_taken = simulation.num_steps_taken,
-            .chamber_save = try simulation.chamber_mod.save(self.alloc, simulation.chamber_state),
+            //.chamber_save = try simulation.chamber_mod.save(self.alloc, simulation.chamber_state),
             .prng = simulation.prng,
         };
         self.tail += 1;
         self.tail %= num_elems;
         if (self.tail == self.head) {
-            self.alloc.free(self.history[self.head].chamber_save);
+            //self.alloc.free(self.history[self.head].chamber_save);
             self.head += 1;
             self.head %= num_elems;
         }
     }
 
     pub fn deinit(self: *SimulationHistory) void {
-        var it = self.iter();
-        while (it.next()) |val| {
-            self.alloc.free(val.chamber_save);
-        }
+        _ = self;
+        //var it = self.iter();
+        //while (it.next()) |val| {
+        //    self.alloc.free(val.chamber_save);
+        //}
     }
 
     pub fn iter(self: *SimulationHistory) Iter {
@@ -222,8 +230,8 @@ const Simulation = struct {
     mutex: std.Thread.Mutex,
     balls: [num_balls]Ball,
     prng: std.rand.DefaultPrng,
-    chamber_mod: wasm_chamber.WasmChamber,
-    chamber_state: i32,
+    chamber_mod: [2]wasm_chamber.WasmChamber,
+    chamber_state: [2]i32,
     history: SimulationHistory,
     num_steps_taken: u64,
 
@@ -272,14 +280,19 @@ const Simulation = struct {
             applyWrap(ball);
         }
 
-        self.chamber_mod.step(self.chamber_state, &self.balls, step_len_s) catch {
-            std.log.err("chamber step failed", .{});
-        };
+        for (0..self.chamber_mod.len) |i| {
+            const start = i * num_balls / self.chamber_mod.len;
+            const end = start + num_balls / self.chamber_mod.len;
+            self.chamber_mod[i].step(self.chamber_state[i], self.balls[start..end], step_len_s) catch {
+                std.log.err("chamber step failed", .{});
+            };
+        }
 
         for (0..self.balls.len) |i| {
             const ball = &self.balls[i];
 
-            for (i + 1..self.balls.len) |j| {
+            const end = if (i < self.balls.len / 2) self.balls.len / 2 else self.balls.len;
+            for (i + 1..end) |j| {
                 const b = &self.balls[j];
                 const center_dist = b.pos.sub(ball.pos).length();
                 if (center_dist < ball.r + b.r) {
@@ -435,7 +448,7 @@ const Args = struct {
     }
 };
 
-const num_balls = 5;
+const num_balls = 10;
 
 fn makeBalls(rng: *std.Random.DefaultPrng) [num_balls]Ball {
     var ret: [num_balls]Ball = undefined;
@@ -492,10 +505,18 @@ pub fn main() !void {
 
     const chamber_content = try embeddedLookup("/chamber.wasm");
 
-    var chamber_mod = try wasm_loader.load(alloc, chamber_content);
-    defer chamber_mod.deinit();
+    var chamber_mod: [2]wasm_chamber.WasmChamber = undefined;
+    var chamber_state: [2]i32 = undefined;
+    defer {
+        for (&chamber_mod) |*m| {
+            m.deinit();
+        }
+    }
 
-    const chamber_state = try chamber_mod.initChamber();
+    for (0..2) |i| {
+        chamber_mod[i] = try wasm_loader.load(alloc, chamber_content);
+        chamber_state[i] = try chamber_mod[i].initChamber(prng.random().int(u64));
+    }
 
     var simulation_ctx = Simulation{
         .mutex = std.Thread.Mutex{},
@@ -533,8 +554,8 @@ pub fn main() !void {
         simulation_ctx.prng = parsed_snapshot.value.prng;
         simulation_ctx.balls = parsed_snapshot.value.balls;
         simulation_ctx.num_steps_taken = parsed_snapshot.value.num_steps_taken;
-        try chamber_mod.deinitChamber(simulation_ctx.chamber_state);
-        simulation_ctx.chamber_state = try chamber_mod.load(parsed_snapshot.value.chamber_save);
+        //try chamber_mod.deinitChamber(simulation_ctx.chamber_state);
+        //simulation_ctx.chamber_state = try chamber_mod.load(parsed_snapshot.value.chamber_save);
     }
 
     var shutdown = std.atomic.Value(bool).init(false);

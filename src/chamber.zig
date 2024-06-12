@@ -40,13 +40,21 @@ fn print(comptime fmt: []const u8, args: anytype) void {
     logWasm(to_print.ptr, to_print.len);
 }
 
-pub export fn init() ?*State {
+pub export fn init(seed: u64) ?*State {
     physics.assertBallLayout();
     const ret = plugin_alloc.create(State) catch {
         return null;
     };
 
     ret.* = .{};
+
+    var rng = std.Random.DefaultPrng.init(seed);
+    var random = rng.random();
+
+    for (0..ret.platform_locs.len) |i| {
+        ret.platform_locs[i] = random.float(f32);
+        print("platform {d} going to {d}\n", .{ i, ret.platform_locs[i] });
+    }
     return ret;
 }
 

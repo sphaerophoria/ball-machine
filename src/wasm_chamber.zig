@@ -92,12 +92,16 @@ pub const WasmChamber = struct {
         self.alloc.destroy(self.memory);
     }
 
-    pub fn initChamber(self: *WasmChamber) !i32 {
+    pub fn initChamber(self: *WasmChamber, seed: u64) !i32 {
         var result: c.wasmtime_val_t = undefined;
         var trap: ?*c.wasm_trap_t = null;
 
+        var input: c.wasmtime_val_t = undefined;
+        input.kind = c.WASMTIME_I64;
+        input.of.i64 = @bitCast(seed);
+
         const err =
-            c.wasmtime_func_call(self.context, &self.init_fn, null, 0, &result, 1, &trap);
+            c.wasmtime_func_call(self.context, &self.init_fn, &input, 1, &result, 1, &trap);
 
         if (err != null or trap != null) {
             return error.InternalError;
