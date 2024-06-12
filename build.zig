@@ -79,6 +79,5 @@ pub fn build(b: *std.Build) !void {
     });
     exe.addIncludePath(b.path("deps/wasmtime/crates/c-api/include"));
     exe.linkLibC();
-    exe.linkLibCpp();
     b.installArtifact(exe);
 }
