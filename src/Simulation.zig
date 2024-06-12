@@ -111,15 +111,15 @@ pub fn step(self: *Simulation) void {
         }
     }
 
-    if (self.num_steps_taken % 4800 == 0) {
-        self.balls = makeBalls(&self.prng);
-    }
-
     if (self.num_steps_taken % 10 == 0) {
         self.history.push(self) catch |e| {
             std.log.err("failed to write history: {any}", .{e});
         };
     }
+}
+
+pub fn reset(self: *Simulation) void {
+    self.balls = makeBalls(&self.prng);
 }
 
 fn applyGravity(ball: *Ball, delta: f32) void {

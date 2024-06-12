@@ -164,6 +164,12 @@ pub fn handleConnection(alloc: Allocator, www_root: ?[]const u8, chamber_paths: 
             try simulation.history.save("history.json");
             try req.respond("", .{});
             return;
+        } else if (std.mem.eql(u8, target, "/reset")) {
+            simulation.mutex.lock();
+            defer simulation.mutex.unlock();
+            simulation.reset();
+            try req.respond("", .{});
+            return;
         } else if (std.mem.eql(u8, target, "/chamber.wasm")) {
             try respondWithFileContents(&req, chamber_paths[tagged_url.id]);
             return;

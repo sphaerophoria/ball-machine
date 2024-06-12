@@ -58,6 +58,12 @@ class Chamber {
     button.innerHTML = "Save history";
     button.onclick = () => fetch(this.prefix + "/save");
 
+    const reset_button = document.createElement("button");
+    button_div.append(reset_button);
+
+    reset_button.innerHTML = "Reset";
+    reset_button.onclick = () => fetch(this.prefix + "/reset");
+
     document.body.appendChild(top_div);
 
     this.chamber_pixel_len = this.canvas.width * this.canvas.height * 4;
