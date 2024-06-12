@@ -55,25 +55,31 @@ pub export fn deinit(state: *State) void {
 }
 
 const save_size = 20;
-pub export fn save(state: *State) ?*[]u8 {
-    const ret = alloc(save_size, 1) orelse {
-        return null;
-    };
+pub export fn saveSize() usize {
+    return save_size;
+}
+
+pub export fn save(state: *State, out_p: [*]u8) void {
+    var out = ptrToSlice(out_p);
+    if (out.len != save_size) {
+        @panic("Invalid save size");
+    }
+
     for (0..state.platform_locs.len) |i| {
         const start = i * 4;
         const end = start + 4;
-        @memcpy(ret.*[start..end], std.mem.asBytes(&state.platform_locs[i]));
-        ret.*[16 + i] = @intFromEnum(state.directions[i]);
+        @memcpy(out[start..end], std.mem.asBytes(&state.platform_locs[i]));
+        out[16 + i] = @intFromEnum(state.directions[i]);
     }
-    return ret;
 }
 
-pub export fn load(save_buf: *[]const u8) ?*State {
+pub export fn load(save_buf_p: [*]const u8) ?*State {
+    const save_buf: []const u8 = ptrToSlice(@constCast(save_buf_p));
     const ret = plugin_alloc.create(State) catch {
         return null;
     };
 
-    if (save_buf.*.len != save_size) {
+    if (save_buf.len != save_size) {
         return null;
     }
 
@@ -83,8 +89,8 @@ pub export fn load(save_buf: *[]const u8) ?*State {
     for (0..num_platforms) |i| {
         const start = i * 4;
         const end = start + 4;
-        platform_locs[i] = std.mem.bytesToValue(f32, save_buf.*[start..end]);
-        directions[i] = @enumFromInt(save_buf.*[16 + i]);
+        platform_locs[i] = std.mem.bytesToValue(f32, save_buf[start..end]);
+        directions[i] = @enumFromInt(save_buf[16 + i]);
     }
 
     ret.* = .{
@@ -188,39 +194,43 @@ pub export fn step(state: *State, balls: [*]Ball, num_balls: usize, delta: f32) 
     }
 }
 
-pub export fn alloc(size: usize, alignment: u8) ?*[]u8 {
-    const ret_slice = plugin_alloc.rawAlloc(size, alignment, @returnAddress()) orelse {
+pub export fn alloc(size: usize, alignment: u8) ?[*]u8 {
+    const alloc_size = size + @sizeOf(usize);
+    const ret_w_len = plugin_alloc.rawAlloc(alloc_size, alignment, @returnAddress()) orelse {
         return null;
     };
 
-    const ret = plugin_alloc.create([]u8) catch {
-        return null;
-    };
-    ret.*.ptr = ret_slice;
-    ret.*.len = size;
+    @memcpy(ret_w_len[0..@sizeOf(usize)], std.mem.asBytes(&alloc_size));
+
+    const ret = ret_w_len + @sizeOf(usize);
     return ret;
 }
 
-pub export fn free(data: *[]u8) void {
-    plugin_alloc.free(data.*);
-    plugin_alloc.destroy(data);
+fn ptrToSlice(data: [*]u8) []u8 {
+    const alloced_ptr = data - @sizeOf(usize);
+    var allocated_len: usize = undefined;
+    @memcpy(std.mem.asBytes(&allocated_len), alloced_ptr[0..@sizeOf(usize)]);
+
+    return data[@sizeOf(usize)..allocated_len];
 }
 
-pub export fn slicePtr(p: *[]u8) [*]u8 {
-    return p.ptr;
+pub export fn free(data: [*]u8) void {
+    const alloced_ptr = data - @sizeOf(usize);
+    var allocated_len: usize = undefined;
+    @memcpy(std.mem.asBytes(&allocated_len), alloced_ptr[0..@sizeOf(usize)]);
+
+    plugin_alloc.free(alloced_ptr[0..allocated_len]);
 }
 
-pub export fn sliceLen(p: *[]u8) usize {
-    return p.len;
-}
+pub export fn render(state: *State, pixel_data_p: [*]u8, canvas_width: usize, canvas_height: usize) void {
+    const pixel_data = ptrToSlice(pixel_data_p);
 
-pub export fn render(state: *State, pixel_data: *[]u8, canvas_width: usize, canvas_height: usize) void {
     const canvas_width_f: f32 = @floatFromInt(canvas_width);
     const canvas_height_f: f32 = @floatFromInt(canvas_height);
     const num_y_px: usize = @intFromFloat(platform_height_norm * canvas_width_f);
 
     for (0..num_platforms) |i| {
-        const pixel_data_u32: []u32 = @alignCast(std.mem.bytesAsSlice(u32, pixel_data.*));
+        const pixel_data_u32: []u32 = @alignCast(std.mem.bytesAsSlice(u32, pixel_data));
         var platform_x_start_norm = state.platform_locs[i] - platform_width_norm / 2.0;
         var platform_x_end_norm = platform_x_start_norm + platform_width_norm;
         platform_x_start_norm = @max(0.0, platform_x_start_norm);

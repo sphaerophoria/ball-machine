@@ -40,6 +40,7 @@ pub const WasmLoader = struct {
         const module = try makeModuleFromData(data, self.engine);
         defer c.wasmtime_module_delete(module);
         const memory: *c.wasmtime_memory_t = try alloc.create(c.wasmtime_memory_t);
+        errdefer alloc.destroy(memory);
 
         var instance = try makeInstance(self.context, module, memory);
         memory.* = try loadWasmMemory(self.context, &instance);
@@ -47,10 +48,9 @@ pub const WasmLoader = struct {
         const log_state_fn = try loadWasmFn("logState", self.context, &instance);
         const alloc_fn = try loadWasmFn("alloc", self.context, &instance);
         const free_fn = try loadWasmFn("free", self.context, &instance);
-        const slice_ptr_fn = try loadWasmFn("slicePtr", self.context, &instance);
-        const slice_len_fn = try loadWasmFn("sliceLen", self.context, &instance);
         const step_fn = try loadWasmFn("step", self.context, &instance);
         const save_fn = try loadWasmFn("save", self.context, &instance);
+        const save_size_fn = try loadWasmFn("saveSize", self.context, &instance);
         const load_fn = try loadWasmFn("load", self.context, &instance);
         const deinit_fn = try loadWasmFn("deinit", self.context, &instance);
 
@@ -63,10 +63,9 @@ pub const WasmLoader = struct {
             .log_state_fn = log_state_fn,
             .alloc_fn = alloc_fn,
             .free_fn = free_fn,
-            .slice_ptr_fn = slice_ptr_fn,
-            .slice_len_fn = slice_len_fn,
             .step_fn = step_fn,
             .save_fn = save_fn,
+            .save_size_fn = save_size_fn,
             .load_fn = load_fn,
             .deinit_fn = deinit_fn,
         };
@@ -81,10 +80,9 @@ pub const WasmChamber = struct {
     log_state_fn: c.wasmtime_func_t,
     alloc_fn: c.wasmtime_func_t,
     free_fn: c.wasmtime_func_t,
-    slice_ptr_fn: c.wasmtime_func_t,
-    slice_len_fn: c.wasmtime_func_t,
     step_fn: c.wasmtime_func_t,
     save_fn: c.wasmtime_func_t,
+    save_size_fn: c.wasmtime_func_t,
     load_fn: c.wasmtime_func_t,
     deinit_fn: c.wasmtime_func_t,
 
@@ -111,15 +109,16 @@ pub const WasmChamber = struct {
         var trap: ?*c.wasm_trap_t = null;
 
         const wasm_ptr = try self.allocWasm(data.len, 1);
+        const wasm_offs = std.math.cast(usize, wasm_ptr) orelse {
+            return error.InvalidOffset;
+        };
+
         defer self.freeWasm(wasm_ptr) catch {
             std.log.err("Failed to free wasm memory", .{});
         };
 
-        const offs = std.math.cast(usize, try self.slicePtr(wasm_ptr)) orelse {
-            return error.InternalError;
-        };
         const p = c.wasmtime_memory_data(self.context, self.memory);
-        @memcpy((p + offs)[0..data.len], data);
+        @memcpy((p + wasm_offs)[0..data.len], data);
 
         var input: c.wasmtime_val_t = undefined;
         input.kind = c.WASMTIME_I32;
@@ -208,61 +207,13 @@ pub const WasmChamber = struct {
         }
     }
 
-    pub fn slicePtr(self: *WasmChamber, ptr: i32) !i32 {
+    pub fn saveSize(self: *WasmChamber) !i32 {
         var trap: ?*c.wasm_trap_t = null;
-
-        var input: c.wasmtime_val_t = undefined;
-        input.kind = c.WASMTIME_I32;
-        input.of.i32 = ptr;
-        var result: c.wasmtime_val_t = undefined;
-
-        const err =
-            c.wasmtime_func_call(self.context, &self.slice_ptr_fn, &input, 1, &result, 1, &trap);
-
-        if (err != null or trap != null) {
-            return error.InternalError;
-        }
-
-        if (result.kind != c.WASMTIME_I32) {
-            return error.InvalidResponse;
-        }
-
-        return result.of.i32;
-    }
-
-    pub fn sliceLen(self: *WasmChamber, ptr: i32) !i32 {
-        var trap: ?*c.wasm_trap_t = null;
-
-        var input: c.wasmtime_val_t = undefined;
-        input.kind = c.WASMTIME_I32;
-        input.of.i32 = ptr;
-        var result: c.wasmtime_val_t = undefined;
-
-        const err =
-            c.wasmtime_func_call(self.context, &self.slice_len_fn, &input, 1, &result, 1, &trap);
-
-        if (err != null or trap != null) {
-            return error.InternalError;
-        }
-
-        if (result.kind != c.WASMTIME_I32) {
-            return error.InvalidResponse;
-        }
-
-        return result.of.i32;
-    }
-
-    pub fn save(self: *WasmChamber, alloc: Allocator, state: i32) ![]const u8 {
-        var trap: ?*c.wasm_trap_t = null;
-
-        var input: c.wasmtime_val_t = undefined;
-        input.kind = c.WASMTIME_I32;
-        input.of.i32 = state;
 
         var result: c.wasmtime_val_t = undefined;
 
         const err =
-            c.wasmtime_func_call(self.context, &self.save_fn, &input, 1, &result, 1, &trap);
+            c.wasmtime_func_call(self.context, &self.save_size_fn, null, 0, &result, 1, &trap);
 
         if (err != null or trap != null) {
             return error.InternalError;
@@ -272,16 +223,41 @@ pub const WasmChamber = struct {
             return error.InvalidResult;
         }
 
-        defer self.freeWasm(result.of.i32) catch {
-            std.log.err("Failed to free balls ptr", .{});
+        return result.of.i32;
+    }
+
+    pub fn save(self: *WasmChamber, alloc: Allocator, state: i32) ![]const u8 {
+        var trap: ?*c.wasm_trap_t = null;
+
+        const save_size: usize = std.math.cast(usize, try self.saveSize()) orelse {
+            return error.InternalError;
+        };
+        const save_data = try self.allocWasm(save_size, 1);
+        defer self.freeWasm(save_data) catch {
+            std.log.err("Failed to free save data", .{});
         };
 
-        const p = c.wasmtime_memory_data(self.context, self.memory);
-        const offs: usize = @intCast(try self.slicePtr(result.of.i32));
-        const len: usize = @intCast(try self.sliceLen(result.of.i32));
-        const save_data: [*]u8 = @ptrCast(@alignCast(p + offs));
+        var inputs: [2]c.wasmtime_val_t = undefined;
+        inputs[0].kind = c.WASMTIME_I32;
+        inputs[0].of.i32 = state;
 
-        return alloc.dupe(u8, save_data[0..len]);
+        inputs[1].kind = c.WASMTIME_I32;
+        inputs[1].of.i32 = save_data;
+
+        const err =
+            c.wasmtime_func_call(self.context, &self.save_fn, &inputs, inputs.len, null, 0, &trap);
+
+        if (err != null or trap != null) {
+            return error.InternalError;
+        }
+
+        const p = c.wasmtime_memory_data(self.context, self.memory);
+        const offs = std.math.cast(usize, save_data) orelse {
+            return error.InvalidOffset;
+        };
+        const save_data_slice: [*]u8 = @ptrCast(@alignCast(p + offs));
+
+        return alloc.dupe(u8, save_data_slice[0..save_size]);
     }
 
     pub fn step(self: *WasmChamber, state: i32, balls: []Ball, delta: f32) !void {
@@ -292,10 +268,8 @@ pub const WasmChamber = struct {
             std.log.err("Failed to free balls ptr", .{});
         };
 
-        const wasm_balls_offs: i32 = try self.slicePtr(balls_ptr);
-
         const p = c.wasmtime_memory_data(self.context, self.memory);
-        const offs: usize = @intCast(wasm_balls_offs);
+        const offs: usize = @intCast(balls_ptr);
         const wasm_balls: [*]Ball = @ptrCast(@alignCast(p + offs));
         @memcpy(wasm_balls[0..balls.len], balls);
 
@@ -304,7 +278,7 @@ pub const WasmChamber = struct {
         inputs[0].of.i32 = state;
 
         inputs[1].kind = c.WASMTIME_I32;
-        inputs[1].of.i32 = wasm_balls_offs;
+        inputs[1].of.i32 = balls_ptr;
 
         inputs[2].kind = c.WASMTIME_I32;
         inputs[2].of.i32 = @intCast(balls.len);

@@ -1,5 +1,6 @@
 var chamber = null;
 var chamber_pixel_data = null;
+var chamber_pixel_len = null;
 
 function wasmLog(s, len) {
   var uint_arr = new Uint8Array(chamber.instance.exports.memory.buffer, s, len);
@@ -9,26 +10,19 @@ function wasmLog(s, len) {
 }
 
 function getChamberPixels() {
-  const offs = chamber.instance.exports.slicePtr(chamber_pixel_data);
-  const len = chamber.instance.exports.sliceLen(chamber_pixel_data);
-
   return new Uint8ClampedArray(
     chamber.instance.exports.memory.buffer,
-    offs,
-    len,
+    chamber_pixel_data,
+    chamber_pixel_len,
   );
 }
 
 function loadChamber(simulation_state) {
-  const chamber_save = chamber.instance.exports.alloc(
-    simulation_state.chamber_state.length,
-    1,
-  );
-  const offset = chamber.instance.exports.slicePtr(chamber_save);
-  const len = chamber.instance.exports.sliceLen(chamber_save);
+  const len = simulation_state.chamber_state.length;
+  const chamber_save = chamber.instance.exports.alloc(len, 1);
   const arr = new Uint8Array(
     chamber.instance.exports.memory.buffer,
-    offset,
+    chamber_save,
     len,
   );
   arr.set(simulation_state.chamber_state);
@@ -105,10 +99,8 @@ async function init() {
       chamber = obj;
 
       const canvas = document.getElementById("canvas");
-      chamber_pixel_data = chamber.instance.exports.alloc(
-        canvas.width * canvas.height * 4,
-        4,
-      );
+      chamber_pixel_len = canvas.width * canvas.height * 4;
+      chamber_pixel_data = chamber.instance.exports.alloc(chamber_pixel_len, 4);
 
       render();
     },
