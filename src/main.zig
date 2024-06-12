@@ -1,7 +1,8 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const resources = @import("resources");
 const Allocator = std.mem.Allocator;
-const chamber = @import("chamber.zig");
+const wasm_chamber = @import("wasm_chamber.zig");
 const physics = @import("physics.zig");
 const Pos2 = physics.Pos2;
 const Vec2 = physics.Vec2;
@@ -73,12 +74,18 @@ pub fn handleConnection(alloc: Allocator, www_root: ?[]const u8, connection: std
             chamber_state: []const u8,
         };
 
+        var chamber_save: []const u8 = &.{};
+        defer alloc.free(chamber_save);
+
         const response_content = blk: {
             simulation.mutex.lock();
             defer simulation.mutex.unlock();
+
+            chamber_save = try simulation.chamber_mod.save(alloc, simulation.chamber_state);
+
             break :blk ResponseJson{
                 .balls = simulation.balls,
-                .chamber_state = &chamber.save(simulation.chamber_state),
+                .chamber_state = chamber_save,
             };
         };
         var send_buffer: [4096]u8 = undefined;
@@ -132,29 +139,63 @@ pub fn handleConnection(alloc: Allocator, www_root: ?[]const u8, connection: std
 const SimulationSnapshot = struct {
     balls: [num_balls]Ball,
     num_steps_taken: u64,
-    chamber_state: [20]u8,
+    chamber_save: []const u8,
     prng: std.Random.DefaultPrng,
 };
 
 const SimulationHistory = struct {
     const num_elems = 600;
+    alloc: Allocator,
     history: [num_elems]SimulationSnapshot = undefined,
     head: usize = 0,
     tail: usize = 0,
 
-    pub fn push(self: *SimulationHistory, simulation: *Simulation) void {
+    const Iter = struct {
+        history: *SimulationHistory,
+        pos: usize,
+
+        pub fn next(self: *@This()) ?*SimulationSnapshot {
+            if (self.pos == self.history.history.len) {
+                self.pos = 0;
+            }
+
+            if (self.pos == self.history.tail) {
+                return null;
+            }
+
+            defer self.pos += 1;
+            return &self.history.history[self.pos];
+        }
+    };
+
+    pub fn push(self: *SimulationHistory, simulation: *Simulation) !void {
         self.history[self.tail] = .{
             .balls = simulation.balls,
             .num_steps_taken = simulation.num_steps_taken,
-            .chamber_state = chamber.save(simulation.chamber_state),
+            .chamber_save = try simulation.chamber_mod.save(self.alloc, simulation.chamber_state),
             .prng = simulation.prng,
         };
         self.tail += 1;
         self.tail %= num_elems;
         if (self.tail == self.head) {
+            self.alloc.free(self.history[self.head].chamber_save);
             self.head += 1;
             self.head %= num_elems;
         }
+    }
+
+    pub fn deinit(self: *SimulationHistory) void {
+        var it = self.iter();
+        while (it.next()) |val| {
+            self.alloc.free(val.chamber_save);
+        }
+    }
+
+    pub fn iter(self: *SimulationHistory) Iter {
+        return .{
+            .history = self,
+            .pos = self.head,
+        };
     }
 
     pub fn save(self: *SimulationHistory, path: []const u8) !void {
@@ -169,20 +210,10 @@ const SimulationHistory = struct {
         });
         try json_writer.beginArray();
 
-        if (self.head <= self.tail) {
-            for (self.head..self.tail) |i| {
-                try json_writer.write(self.history[i]);
-            }
-        } else {
-            for (self.head..num_elems) |i| {
-                try json_writer.write(self.history[i]);
-            }
-
-            for (0..self.tail) |i| {
-                try json_writer.write(self.history[i]);
-            }
+        var it = self.iter();
+        while (it.next()) |val| {
+            try json_writer.write(val);
         }
-
         try json_writer.endArray();
     }
 };
@@ -191,12 +222,17 @@ const Simulation = struct {
     mutex: std.Thread.Mutex,
     balls: [num_balls]Ball,
     prng: std.rand.DefaultPrng,
-    chamber_state: *chamber.State,
+    chamber_mod: wasm_chamber.WasmChamber,
+    chamber_state: i32,
     history: SimulationHistory,
     num_steps_taken: u64,
 
     const step_len_ns = 1_666_666;
     const step_len_s: f32 = @as(f32, @floatFromInt(step_len_ns)) / 1_000_000_000;
+
+    fn deinit(self: *Simulation) void {
+        self.history.deinit();
+    }
 
     fn applyGravity(ball: *Ball, delta: f32) void {
         const G = -9.832;
@@ -236,7 +272,9 @@ const Simulation = struct {
             applyWrap(ball);
         }
 
-        chamber.step(self.chamber_state, &self.balls, step_len_s);
+        self.chamber_mod.step(self.chamber_state, &self.balls, step_len_s) catch {
+            std.log.err("chamber step failed", .{});
+        };
 
         for (0..self.balls.len) |i| {
             const ball = &self.balls[i];
@@ -255,7 +293,9 @@ const Simulation = struct {
         }
 
         if (self.num_steps_taken % 10 == 0) {
-            self.history.push(self);
+            self.history.push(self) catch |e| {
+                std.log.err("failed to write history: {any}", .{e});
+            };
         }
     }
 };
@@ -446,16 +486,29 @@ pub fn main() !void {
     try std.posix.getrandom(std.mem.asBytes(&seed));
     var prng = std.Random.DefaultPrng.init(seed);
     const balls = makeBalls(&prng);
+
+    var wasm_loader = try wasm_chamber.WasmLoader.init();
+    defer wasm_loader.deinit();
+
+    const chamber_content = try embeddedLookup("/chamber.wasm");
+
+    var chamber_mod = try wasm_loader.load(alloc, chamber_content);
+    defer chamber_mod.deinit();
+
+    const chamber_state = try chamber_mod.initChamber();
+
     var simulation_ctx = Simulation{
         .mutex = std.Thread.Mutex{},
         .num_steps_taken = 0,
         .prng = prng,
         .balls = balls,
-        .history = SimulationHistory{},
-        .chamber_state = chamber.init() orelse {
-            return error.InternalError;
+        .history = SimulationHistory{
+            .alloc = alloc,
         },
+        .chamber_mod = chamber_mod,
+        .chamber_state = chamber_state,
     };
+    defer simulation_ctx.deinit();
 
     if (args.history_file) |history_file_path| {
         const f = try std.fs.cwd().openFile(history_file_path, .{});
@@ -480,9 +533,8 @@ pub fn main() !void {
         simulation_ctx.prng = parsed_snapshot.value.prng;
         simulation_ctx.balls = parsed_snapshot.value.balls;
         simulation_ctx.num_steps_taken = parsed_snapshot.value.num_steps_taken;
-        var chamber_save: []const u8 = &parsed_snapshot.value.chamber_state;
-        chamber.deinit(simulation_ctx.chamber_state);
-        simulation_ctx.chamber_state = chamber.load(&chamber_save).?;
+        try chamber_mod.deinitChamber(simulation_ctx.chamber_state);
+        simulation_ctx.chamber_state = try chamber_mod.load(parsed_snapshot.value.chamber_save);
     }
 
     var shutdown = std.atomic.Value(bool).init(false);

@@ -2,7 +2,6 @@ const std = @import("std");
 const physics = @import("physics.zig");
 const Ball = physics.Ball;
 const Surface = physics.Surface;
-const builtin = @import("builtin");
 const Allocator = std.mem.Allocator;
 
 const Direction = enum(u8) {
@@ -28,16 +27,7 @@ pub const State = struct {
     directions: [num_platforms]Direction = .{ .right, .left, .right, .left },
 };
 
-const plugin_alloc = blk: {
-    if (builtin.target.isWasm()) {
-        break :blk std.heap.wasm_allocator;
-    } else {
-        const s = struct {
-            var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-        };
-        break :blk s.gpa.allocator();
-    }
-};
+const plugin_alloc = std.heap.wasm_allocator;
 
 extern fn logWasm(s: [*]const u8, len: usize) void;
 
@@ -51,6 +41,7 @@ fn print(comptime fmt: []const u8, args: anytype) void {
 }
 
 pub export fn init() ?*State {
+    physics.assertBallLayout();
     const ret = plugin_alloc.create(State) catch {
         return null;
     };
@@ -64,13 +55,15 @@ pub export fn deinit(state: *State) void {
 }
 
 const save_size = 20;
-pub fn save(state: *State) [save_size]u8 {
-    var ret: [save_size]u8 = undefined;
+pub export fn save(state: *State) ?*[]u8 {
+    const ret = alloc(save_size, 1) orelse {
+        return null;
+    };
     for (0..state.platform_locs.len) |i| {
         const start = i * 4;
         const end = start + 4;
-        @memcpy(ret[start..end], std.mem.asBytes(&state.platform_locs[i]));
-        ret[16 + i] = @intFromEnum(state.directions[i]);
+        @memcpy(ret.*[start..end], std.mem.asBytes(&state.platform_locs[i]));
+        ret.*[16 + i] = @intFromEnum(state.directions[i]);
     }
     return ret;
 }
@@ -102,12 +95,10 @@ pub export fn load(save_buf: *[]const u8) ?*State {
 }
 
 pub export fn logState(state: *State) void {
-    if (builtin.target.isWasm()) {
-        print("{any}\n", .{state.*});
-    }
+    print("{any}\n", .{state.*});
 }
 
-pub fn step(state: *State, balls: []Ball, delta: f32) void {
+pub export fn step(state: *State, balls: [*]Ball, num_balls: usize, delta: f32) void {
     const speed = 1.0;
     for (0..num_platforms) |i| {
         var movement = speed * delta;
@@ -131,7 +122,7 @@ pub fn step(state: *State, balls: []Ball, delta: f32) void {
         };
 
         const obj_normal = obj.normal();
-        for (balls) |*ball| {
+        for (balls[0..num_balls]) |*ball| {
             const ball_collision_point_offs = obj_normal.mul(-ball.r);
             const ball_collision_point = ball.pos.add(ball_collision_point_offs);
 
@@ -184,7 +175,7 @@ pub fn step(state: *State, balls: []Ball, delta: f32) void {
     };
 
     for (walls) |wall| {
-        for (balls) |*ball| {
+        for (balls[0..num_balls]) |*ball| {
             const obj_normal = wall.normal();
             const ball_collision_point_offs = obj_normal.mul(-ball.r);
             const ball_collision_point = ball.pos.add(ball_collision_point_offs);
@@ -196,15 +187,17 @@ pub fn step(state: *State, balls: []Ball, delta: f32) void {
         }
     }
 }
-pub export fn alloc(size: usize) ?*[]u8 {
-    const ret_slice = plugin_alloc.alloc(u8, size) catch {
+
+pub export fn alloc(size: usize, alignment: u8) ?*[]u8 {
+    const ret_slice = plugin_alloc.rawAlloc(size, alignment, @returnAddress()) orelse {
         return null;
     };
 
     const ret = plugin_alloc.create([]u8) catch {
         return null;
     };
-    ret.* = ret_slice;
+    ret.*.ptr = ret_slice;
+    ret.*.len = size;
     return ret;
 }
 

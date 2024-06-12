@@ -22,6 +22,7 @@ function getChamberPixels() {
 function loadChamber(simulation_state) {
   const chamber_save = chamber.instance.exports.alloc(
     simulation_state.chamber_state.length,
+    1,
   );
   const offset = chamber.instance.exports.slicePtr(chamber_save);
   const len = chamber.instance.exports.sliceLen(chamber_save);
@@ -106,6 +107,7 @@ async function init() {
       const canvas = document.getElementById("canvas");
       chamber_pixel_data = chamber.instance.exports.alloc(
         canvas.width * canvas.height * 4,
+        4,
       );
 
       render();

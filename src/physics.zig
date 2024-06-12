@@ -1,8 +1,27 @@
+const std = @import("std");
+const builtin = @import("builtin");
+
 pub const Ball = struct {
     pos: Pos2,
     r: f32,
     velocity: Vec2,
 };
+
+pub fn assertBallLayout() void {
+    std.debug.assert(@alignOf(Ball) == 4);
+    std.debug.assert(@sizeOf(Ball) == 20);
+
+    const ball: Ball = undefined;
+    std.debug.assert(@offsetOf(Ball, "pos") == 0);
+    std.debug.assert(@intFromPtr(&ball.pos.x) - @intFromPtr(&ball.pos) == 0);
+    std.debug.assert(@intFromPtr(&ball.pos.y) - @intFromPtr(&ball.pos) == 4);
+
+    std.debug.assert(@offsetOf(Ball, "r") == 8);
+
+    std.debug.assert(@offsetOf(Ball, "velocity") == 12);
+    std.debug.assert(@intFromPtr(&ball.velocity.x) - @intFromPtr(&ball.velocity) == 0);
+    std.debug.assert(@intFromPtr(&ball.velocity.y) - @intFromPtr(&ball.velocity) == 4);
+}
 
 pub const Pos2 = struct {
     x: f32,
