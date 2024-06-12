@@ -100,10 +100,6 @@ pub export fn load(save_buf_p: [*]const u8) ?*State {
     return ret;
 }
 
-pub export fn logState(state: *State) void {
-    print("{any}\n", .{state.*});
-}
-
 pub export fn step(state: *State, balls: [*]Ball, num_balls: usize, delta: f32) void {
     const speed = 1.0;
     for (0..num_platforms) |i| {

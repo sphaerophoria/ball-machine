@@ -45,7 +45,6 @@ pub const WasmLoader = struct {
         var instance = try makeInstance(self.context, module, memory);
         memory.* = try loadWasmMemory(self.context, &instance);
         const init_fn = try loadWasmFn("init", self.context, &instance);
-        const log_state_fn = try loadWasmFn("logState", self.context, &instance);
         const alloc_fn = try loadWasmFn("alloc", self.context, &instance);
         const free_fn = try loadWasmFn("free", self.context, &instance);
         const step_fn = try loadWasmFn("step", self.context, &instance);
@@ -60,7 +59,6 @@ pub const WasmLoader = struct {
             .instance = instance,
             .memory = memory,
             .init_fn = init_fn,
-            .log_state_fn = log_state_fn,
             .alloc_fn = alloc_fn,
             .free_fn = free_fn,
             .step_fn = step_fn,
@@ -77,7 +75,6 @@ pub const WasmChamber = struct {
     instance: c.wasmtime_instance_t,
     memory: *c.wasmtime_memory_t,
     init_fn: c.wasmtime_func_t,
-    log_state_fn: c.wasmtime_func_t,
     alloc_fn: c.wasmtime_func_t,
     free_fn: c.wasmtime_func_t,
     step_fn: c.wasmtime_func_t,
@@ -142,20 +139,6 @@ pub const WasmChamber = struct {
         input.of.i32 = state;
         const err =
             c.wasmtime_func_call(self.context, &self.deinit_fn, &input, 1, null, 0, &trap);
-
-        if (err != null or trap != null) {
-            return error.InternalError;
-        }
-    }
-
-    pub fn logState(self: *WasmChamber, state: i32) !void {
-        var trap: ?*c.wasm_trap_t = null;
-
-        var input: c.wasmtime_val_t = undefined;
-        input.kind = c.WASMTIME_I32;
-        input.of.i32 = state;
-        const err =
-            c.wasmtime_func_call(self.context, &self.log_state_fn, &input, 1, null, 0, &trap);
 
         if (err != null or trap != null) {
             return error.InternalError;
@@ -330,15 +313,25 @@ fn makeInstance(context: *c.wasmtime_context_t, module: ?*c.wasmtime_module_t, m
     var log_wasm_func: c.wasmtime_func_t = undefined;
     c.wasmtime_func_new(context, callback_type, &logWasm, memory, null, &log_wasm_func);
 
-    var import: c.wasmtime_extern_t = undefined;
-
-    import.kind = c.WASMTIME_EXTERN_FUNC;
-    import.of = .{ .func = log_wasm_func };
-
     var instance: c.wasmtime_instance_t = undefined;
     var trap: ?*c.wasm_trap_t = null;
 
-    const err = c.wasmtime_instance_new(context, module, &import, 1, &instance, &trap);
+    var required_imports: c.wasm_importtype_vec_t = undefined;
+    c.wasmtime_module_imports(module, &required_imports);
+    defer c.wasm_importtype_vec_delete(&required_imports);
+
+    var err: ?*c.wasmtime_error_t = null;
+
+    if (required_imports.size == 1) {
+        var import: c.wasmtime_extern_t = undefined;
+        import.kind = c.WASMTIME_EXTERN_FUNC;
+        import.of = .{ .func = log_wasm_func };
+
+        err = c.wasmtime_instance_new(context, module, &import, 1, &instance, &trap);
+    } else {
+        err = c.wasmtime_instance_new(context, module, null, 0, &instance, &trap);
+    }
+
     if (err != null or trap != null) {
         return error.InitFailure;
     }
