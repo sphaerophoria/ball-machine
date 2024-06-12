@@ -45,12 +45,12 @@ pub fn pathToContentType(path: []const u8) ![]const u8 {
     return error.Unimplemented;
 }
 
-pub fn getResource(alloc: Allocator, root: []const u8, path: []const u8) !std.fs.File {
+pub fn getResourcePathAlloc(alloc: Allocator, root: []const u8, path: []const u8) ![]const u8 {
     var dir = try std.fs.cwd().openDir(root, .{});
     defer dir.close();
 
     const real_path = try dir.realpathAlloc(alloc, path[1..]);
-    defer alloc.free(real_path);
+    errdefer alloc.free(real_path);
 
     const root_real_path = try std.fs.realpathAlloc(alloc, root);
     defer alloc.free(root_real_path);
@@ -59,10 +59,29 @@ pub fn getResource(alloc: Allocator, root: []const u8, path: []const u8) !std.fs
         return error.InvalidPath;
     }
 
-    return std.fs.openFileAbsolute(real_path, .{});
+    return real_path;
 }
 
-pub fn handleConnection(alloc: Allocator, www_root: ?[]const u8, connection: std.net.Server.Connection, simulation: *Simulation) !void {
+fn respondWithFileContents(req: *std.http.Server.Request, path: []const u8) !void {
+    var send_buffer: [4096]u8 = undefined;
+    var response = req.respondStreaming(.{
+        .send_buffer = &send_buffer,
+        .respond_options = .{
+            .extra_headers = &.{.{
+                .name = "Content-Type",
+                .value = try pathToContentType(req.head.target),
+            }},
+        },
+    });
+
+    const f = try std.fs.cwd().openFile(path, .{});
+    var fifo = std.fifo.LinearFifo(u8, .{ .Static = 4096 }).init();
+    try fifo.pump(f.reader(), response.writer());
+    try response.end();
+    return;
+}
+
+pub fn handleConnection(alloc: Allocator, www_root: ?[]const u8, chamber_path: []const u8, connection: std.net.Server.Connection, simulation: *Simulation) !void {
     var read_buffer: [4096]u8 = undefined;
     var http_server = std.http.Server.init(connection, &read_buffer);
 
@@ -107,6 +126,19 @@ pub fn handleConnection(alloc: Allocator, www_root: ?[]const u8, connection: std
         try simulation.history.save("history.json");
         try req.respond("", .{});
         return;
+    } else if (std.mem.eql(u8, req.head.target, "/chamber.wasm")) {
+        try respondWithFileContents(&req, chamber_path);
+        return;
+    }
+
+    if (www_root) |root| {
+        if (getResourcePathAlloc(alloc, root, req.head.target)) |p| {
+            defer alloc.free(p);
+            try respondWithFileContents(&req, p);
+            return;
+        } else |_| {
+            std.log.err("{s} not found in resource dir, falling back to embedded", .{req.head.target});
+        }
     }
 
     var send_buffer: [4096]u8 = undefined;
@@ -119,18 +151,6 @@ pub fn handleConnection(alloc: Allocator, www_root: ?[]const u8, connection: std
             }},
         },
     });
-
-    if (www_root) |root| {
-        if (getResource(alloc, root, req.head.target)) |f| {
-            var fifo = std.fifo.LinearFifo(u8, .{ .Static = 4096 }).init();
-            try fifo.pump(f.reader(), response.writer());
-            try response.end();
-            return;
-        } else |_| {
-            std.log.err("{s} not found in resource dir, falling back to embedded", .{req.head.target});
-        }
-    }
-
     const content = try embeddedLookup(req.head.target);
     try response.writer().writeAll(content);
     try response.end();
@@ -320,6 +340,7 @@ pub fn runSimulation(ctx: *Simulation, shutdown: *std.atomic.Value(bool)) !void 
 fn signal_handler(_: c_int) align(1) callconv(.C) void {}
 
 const Args = struct {
+    chamber: []const u8,
     www_root: ?[]const u8,
     port: u16,
     history_file: ?[]const u8,
@@ -327,6 +348,7 @@ const Args = struct {
     it: std.process.ArgIterator,
 
     const Option = enum {
+        @"--chamber",
         @"--www-root",
         @"--port",
         @"--load",
@@ -341,6 +363,7 @@ const Args = struct {
         var port: ?u16 = null;
         var history_file: ?[]const u8 = null;
         var history_start_idx: usize = 0;
+        var chamber: ?[]const u8 = null;
 
         while (it.next()) |arg| {
             const option = std.meta.stringToEnum(Option, arg) orelse {
@@ -348,6 +371,12 @@ const Args = struct {
                 help(process_name);
             };
             switch (option) {
+                .@"--chamber" => {
+                    chamber = it.next() orelse {
+                        print("--chamber provided with no argument\n", .{});
+                        help(process_name);
+                    };
+                },
                 .@"--www-root" => {
                     www_root = it.next();
                 },
@@ -384,6 +413,10 @@ const Args = struct {
         }
 
         return .{
+            .chamber = chamber orelse {
+                print("--chamber not provied\n", .{});
+                help(process_name);
+            },
             .www_root = www_root,
             .port = port orelse {
                 print("--port not provied\n", .{});
@@ -411,6 +444,9 @@ const Args = struct {
             print("{s}: ", .{option.name});
             const option_val: Option = @enumFromInt(option.value);
             switch (option_val) {
+                .@"--chamber" => {
+                    print("Which chamber to run", .{});
+                },
                 .@"--www-root" => {
                     print("Optional, where to serve html from", .{});
                 },
@@ -490,7 +526,10 @@ pub fn main() !void {
     var wasm_loader = try wasm_chamber.WasmLoader.init();
     defer wasm_loader.deinit();
 
-    const chamber_content = try embeddedLookup("/chamber.wasm");
+    const chamber_f = try std.fs.cwd().openFile(args.chamber, .{});
+    defer chamber_f.close();
+    const chamber_content = try chamber_f.readToEndAlloc(alloc, 1_000_000);
+    defer alloc.free(chamber_content);
 
     var chamber_mod = try wasm_loader.load(alloc, chamber_content);
     defer chamber_mod.deinit();
@@ -548,7 +587,7 @@ pub fn main() !void {
         const connection = try tcp_server.accept();
         defer connection.stream.close();
 
-        handleConnection(alloc, args.www_root, connection, &simulation_ctx) catch |e| {
+        handleConnection(alloc, args.www_root, args.chamber, connection, &simulation_ctx) catch |e| {
             std.log.err("Failed to handle connection: {any}", .{e});
         };
     }

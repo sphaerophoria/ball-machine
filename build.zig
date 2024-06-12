@@ -52,12 +52,12 @@ pub fn build(b: *std.Build) !void {
     });
     chamber.entry = .disabled;
     chamber.rdynamic = true;
+    b.installArtifact(chamber);
 
     const generate_embedded_resources_step = b.addRunArtifact(generate_embedded_resources);
     const output = generate_embedded_resources_step.addOutputFileArg("resources.zig");
     _ = generate_embedded_resources_step.addDepFileOutputArg("deps.d");
     generate_embedded_resources_step.addDirectoryArg(b.path("src/res"));
-    generate_embedded_resources_step.addDirectoryArg(chamber.getEmittedBin());
 
     const wasmtime_lib = try setupWasmtime(b, opt);
 

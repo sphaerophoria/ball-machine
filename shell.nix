@@ -16,6 +16,7 @@ pkgs.mkShell {
     nodePackages.prettier
     nodePackages.jshint
     rustup
+    binaryen
   ];
 }
 
