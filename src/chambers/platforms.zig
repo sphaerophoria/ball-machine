@@ -1,5 +1,6 @@
 const std = @import("std");
-const physics = @import("physics.zig");
+const physics = @import("physics");
+const plugin_alloc = @import("plugin_alloc.zig");
 const Ball = physics.Ball;
 const Surface = physics.Surface;
 const Allocator = std.mem.Allocator;
@@ -26,8 +27,6 @@ pub const State = struct {
     platform_locs: [num_platforms]f32 = .{ 0.5, 0.2, 0.4, 0.7 },
     directions: [num_platforms]Direction = .{ .right, .left, .right, .left },
 };
-
-const plugin_alloc = std.heap.wasm_allocator;
 
 extern fn logWasm(s: [*]const u8, len: usize) void;
 
@@ -60,7 +59,7 @@ pub export fn saveSize() usize {
 }
 
 pub export fn save(state: *State, out_p: [*]u8) void {
-    var out = ptrToSlice(out_p);
+    var out = plugin_alloc.ptrToSlice(out_p);
     if (out.len != save_size) {
         @panic("Invalid save size");
     }
@@ -74,7 +73,7 @@ pub export fn save(state: *State, out_p: [*]u8) void {
 }
 
 pub export fn load(save_buf_p: [*]const u8) ?*State {
-    const save_buf: []const u8 = ptrToSlice(@constCast(save_buf_p));
+    const save_buf: []const u8 = plugin_alloc.ptrToSlice(@constCast(save_buf_p));
     const ret = plugin_alloc.create(State) catch {
         return null;
     };
@@ -190,36 +189,8 @@ pub export fn step(state: *State, balls: [*]Ball, num_balls: usize, delta: f32) 
     }
 }
 
-pub export fn alloc(size: usize, alignment: u8) ?[*]u8 {
-    const alloc_size = size + @sizeOf(usize);
-    const ret_w_len = plugin_alloc.rawAlloc(alloc_size, alignment, @returnAddress()) orelse {
-        return null;
-    };
-
-    @memcpy(ret_w_len[0..@sizeOf(usize)], std.mem.asBytes(&alloc_size));
-
-    const ret = ret_w_len + @sizeOf(usize);
-    return ret;
-}
-
-fn ptrToSlice(data: [*]u8) []u8 {
-    const alloced_ptr = data - @sizeOf(usize);
-    var allocated_len: usize = undefined;
-    @memcpy(std.mem.asBytes(&allocated_len), alloced_ptr[0..@sizeOf(usize)]);
-
-    return data[@sizeOf(usize)..allocated_len];
-}
-
-pub export fn free(data: [*]u8) void {
-    const alloced_ptr = data - @sizeOf(usize);
-    var allocated_len: usize = undefined;
-    @memcpy(std.mem.asBytes(&allocated_len), alloced_ptr[0..@sizeOf(usize)]);
-
-    plugin_alloc.free(alloced_ptr[0..allocated_len]);
-}
-
 pub export fn render(state: *State, pixel_data_p: [*]u8, canvas_width: usize, canvas_height: usize) void {
-    const pixel_data = ptrToSlice(pixel_data_p);
+    const pixel_data = plugin_alloc.ptrToSlice(pixel_data_p);
 
     const canvas_width_f: f32 = @floatFromInt(canvas_width);
     const canvas_height_f: f32 = @floatFromInt(canvas_height);

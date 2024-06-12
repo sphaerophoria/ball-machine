@@ -32,6 +32,22 @@ fn setupWasmtime(b: *std.Build, opt: std.builtin.OptimizeMode) !std.Build.LazyPa
     return lib_path;
 }
 
+pub fn buildChamber(b: *std.Build, name: []const u8, opt: std.builtin.OptimizeMode) !void {
+    const path = try std.fmt.allocPrint(b.allocator, "src/chambers/{s}.zig", .{name});
+    const chamber = b.addExecutable(.{
+        .name = name,
+        .root_source_file = .{ .path = path },
+        .target = b.resolveTargetQuery(std.zig.CrossTarget.parse(
+            .{ .arch_os_abi = "wasm32-freestanding" },
+        ) catch unreachable),
+        .optimize = opt,
+    });
+    chamber.root_module.addAnonymousImport("physics", .{ .root_source_file = b.path("src/physics.zig") });
+    chamber.entry = .disabled;
+    chamber.rdynamic = true;
+    b.installArtifact(chamber);
+}
+
 pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const opt = b.standardOptimizeOption(.{});
@@ -42,17 +58,8 @@ pub fn build(b: *std.Build) !void {
         .target = b.host,
     });
 
-    const chamber = b.addExecutable(.{
-        .name = "chamber",
-        .root_source_file = .{ .path = "src/chamber.zig" },
-        .target = b.resolveTargetQuery(std.zig.CrossTarget.parse(
-            .{ .arch_os_abi = "wasm32-freestanding" },
-        ) catch unreachable),
-        .optimize = opt,
-    });
-    chamber.entry = .disabled;
-    chamber.rdynamic = true;
-    b.installArtifact(chamber);
+    try buildChamber(b, "simple", opt);
+    try buildChamber(b, "platforms", opt);
 
     const generate_embedded_resources_step = b.addRunArtifact(generate_embedded_resources);
     const output = generate_embedded_resources_step.addOutputFileArg("resources.zig");
