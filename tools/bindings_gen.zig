@@ -194,26 +194,25 @@ const FunctionIter = struct {
         const proto = self.inner_it.ast.fullFnProto(&buf, idx).?;
         const name = self.inner_it.ast.tokenSlice(proto.name_token.?);
 
-        var params = try self.alloc.alloc(FunctionParam, proto.ast.params.len);
-        errdefer self.alloc.free(params);
+        var params = std.ArrayList(FunctionParam).init(self.alloc);
+        errdefer params.deinit();
 
-        for (proto.ast.params, 0..) |param, i| {
-            const param_node = self.inner_it.ast.nodes.get(param);
-            switch (param_node.tag) {
-                .identifier => {
-                    const param_type = self.inner_it.ast.tokenSlice(param_node.main_token);
-                    const param_name = self.inner_it.ast.tokenSlice(param_node.main_token - 2);
+        var param_it = proto.iterate(self.inner_it.ast);
+        var i: usize = 0;
+        while (param_it.next()) |param| {
+            defer i += 1;
+            const name_token_idx = param.name_token orelse {
+                std.log.err("Unhandled unnamed param", .{});
+                continue;
+            };
+            const param_name = self.inner_it.ast.tokenSlice(name_token_idx);
+            const param_type_node = self.inner_it.ast.nodes.items(.main_token)[param.type_expr];
+            const param_type_name = self.inner_it.ast.tokenSlice(param_type_node);
 
-                    params[i] = .{
-                        .ident = param_name,
-                        .typ = param_type,
-                    };
-                },
-                else => {
-                    std.log.err("Unhandled arg type: {any}", .{param_node.tag});
-                    return error.Unimplemented;
-                },
-            }
+            try params.append(.{
+                .ident = param_name,
+                .typ = param_type_name,
+            });
         }
 
         const return_type = self.inner_it.ast.tokenSlice(self.inner_it.ast.nodes.get(proto.ast.return_type).main_token);
@@ -221,11 +220,13 @@ const FunctionIter = struct {
         defer namespace_array_list.deinit();
         const namespace = try namespace_array_list.toOwnedSlice();
 
+        const params_slice = try params.toOwnedSlice();
+
         return FunctionProto{
             .alloc = self.alloc,
             .namespace = namespace,
             .name = name,
-            .params = params,
+            .params = params_slice,
             .ret = return_type,
         };
     }
