@@ -1,15 +1,15 @@
-const std = @import("std");
+//pub fn incrementVar(a: *i32, b: i32) void {
+//    a.* += b;
+//}
 
-pub fn add(a: i32, b: i32) i32 {
-    return a + b;
-}
+pub const Pos2 = extern struct {
+    x: f32,
+    y: f32,
 
-pub const A = struct {
-    pub fn f(val: f32) void {
-        std.debug.print("{d}\n", .{val});
+    pub fn add(p: Pos2, v: f32) Pos2 {
+        return .{
+            .x = p.x + v,
+            .y = p.y + v,
+        };
     }
 };
-
-pub fn sub(a: i32, b: i32) i32 {
-    return a - b;
-}

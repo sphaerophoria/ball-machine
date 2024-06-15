@@ -1,12 +1,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
-pub const Ball = struct {
-    pos: Pos2,
-    r: f32,
-    velocity: Vec2,
-};
-
 pub fn assertBallLayout() void {
     std.debug.assert(@alignOf(Ball) == 4);
     std.debug.assert(@sizeOf(Ball) == 20);
@@ -23,7 +17,7 @@ pub fn assertBallLayout() void {
     std.debug.assert(@intFromPtr(&ball.velocity.y) - @intFromPtr(&ball.velocity) == 4);
 }
 
-pub const Pos2 = struct {
+pub const Pos2 = extern struct {
     x: f32,
     y: f32,
 
@@ -42,7 +36,7 @@ pub const Pos2 = struct {
     }
 };
 
-pub const Vec2 = struct {
+pub const Vec2 = extern struct {
     x: f32,
     y: f32,
 
@@ -84,7 +78,7 @@ pub const Vec2 = struct {
     }
 };
 
-pub const Surface = struct {
+pub const Surface = extern struct {
     // Assumed normal points up if a is left of b, down if b is left of a
     a: Pos2,
     b: Pos2,
@@ -152,6 +146,12 @@ pub const Surface = struct {
     }
 };
 
+pub const Ball = extern struct {
+    pos: Pos2,
+    r: f32,
+    velocity: Vec2,
+};
+
 // Given a point p which is on an infinite line that goes through a and b, is p between a and b?
 fn pointWithinLineBounds(p: Pos2, a: Pos2, b: Pos2) bool {
     // P is out of bounds if it's left of both a and b, or right of both a and
@@ -166,6 +166,22 @@ fn pointWithinLineBounds(p: Pos2, a: Pos2, b: Pos2) bool {
 }
 
 const ball_elasticity_multiplier = 0.85;
+
+// physics.h
+//
+// struct pos2 {
+//   float x, float y
+// }
+//
+// struct pos2 pos2_add(struct pos2, struct vec2);
+// struct pos2 pos2_sub(struct pos2, struct vec2);
+//
+// physics.zig
+// ... impl
+//
+//
+// physics_zig.zig
+//
 
 pub fn applyCollision(ball: *Ball, resolution: Vec2, obj_normal: Vec2, delta: f32) void {
     const vel_ground_proj_mag = ball.velocity.dot(obj_normal);
