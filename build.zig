@@ -25,9 +25,9 @@ fn setupWasmtime(b: *std.Build, opt: std.builtin.OptimizeMode) !std.Build.LazyPa
         .path = try b.build_root.join(b.allocator, &.{ "deps/wasmtime/target", opt_path, "libwasmtime.a" }),
     };
 
-    const lib_path = std.Build.LazyPath{
-        .generated = generated,
-    };
+    const lib_path = std.Build.LazyPath{ .generated = .{
+        .file = generated,
+    } };
 
     return lib_path;
 }
@@ -36,7 +36,7 @@ pub fn buildChamber(b: *std.Build, name: []const u8, opt: std.builtin.OptimizeMo
     const path = try std.fmt.allocPrint(b.allocator, "src/chambers/{s}.zig", .{name});
     const chamber = b.addExecutable(.{
         .name = name,
-        .root_source_file = .{ .path = path },
+        .root_source_file = b.path(path),
         .target = b.resolveTargetQuery(std.zig.CrossTarget.parse(
             .{ .arch_os_abi = "wasm32-freestanding" },
         ) catch unreachable),
@@ -54,7 +54,7 @@ pub fn build(b: *std.Build) !void {
 
     const generate_embedded_resources = b.addExecutable(.{
         .name = "generate_embedded_resources",
-        .root_source_file = .{ .path = "tools/generate_embedded_resources.zig" },
+        .root_source_file = b.path("tools/generate_embedded_resources.zig"),
         .target = b.host,
     });
 
