@@ -5,201 +5,8 @@ const Allocator = std.mem.Allocator;
 const wasm_chamber = @import("wasm_chamber.zig");
 const physics = @import("physics.zig");
 const Simulation = @import("Simulation.zig");
-const Ball = physics.Ball;
-
-fn embeddedLookup(path: []const u8) ![]const u8 {
-    const path_rel = path[1..];
-    for (resources.resources) |elem| {
-        if (std.mem.eql(u8, elem.path, path_rel)) {
-            return elem.data;
-        }
-    }
-    std.log.err("No file {s} embedded in application", .{path});
-    return error.InvalidPath;
-}
-
-pub fn pathToContentType(path: []const u8) ![]const u8 {
-    const Extension = enum {
-        @".js",
-        @".html",
-        @".wasm",
-    };
-
-    inline for (std.meta.fields(Extension)) |field| {
-        if (std.mem.endsWith(u8, path, field.name)) {
-            const enumVal: Extension = @enumFromInt(field.value);
-            switch (enumVal) {
-                .@".js" => return "text/javascript",
-                .@".html" => return "text/html",
-                .@".wasm" => return "application/wasm",
-            }
-        }
-    }
-
-    return error.Unimplemented;
-}
-
-pub fn getResourcePathAlloc(alloc: Allocator, root: []const u8, path: []const u8) ![]const u8 {
-    var dir = try std.fs.cwd().openDir(root, .{});
-    defer dir.close();
-
-    const real_path = try dir.realpathAlloc(alloc, path[1..]);
-    errdefer alloc.free(real_path);
-
-    const root_real_path = try std.fs.realpathAlloc(alloc, root);
-    defer alloc.free(root_real_path);
-
-    if (!std.mem.startsWith(u8, real_path, root_real_path)) {
-        return error.InvalidPath;
-    }
-
-    return real_path;
-}
-
-fn respondWithFileContents(req: *std.http.Server.Request, path: []const u8) !void {
-    var send_buffer: [4096]u8 = undefined;
-    var response = req.respondStreaming(.{
-        .send_buffer = &send_buffer,
-        .respond_options = .{
-            .extra_headers = &.{.{
-                .name = "Content-Type",
-                .value = try pathToContentType(req.head.target),
-            }},
-        },
-    });
-
-    const f = try std.fs.cwd().openFile(path, .{});
-    var fifo = std.fifo.LinearFifo(u8, .{ .Static = 4096 }).init();
-    try fifo.pump(f.reader(), response.writer());
-    try response.end();
-    return;
-}
-
-const UrlComponents = struct {
-    id: usize,
-    target: []const u8,
-};
-
-fn isTaggedRequest(target: []const u8) ?UrlComponents {
-    if (target.len < 1 or target[0] != '/') {
-        return null;
-    }
-
-    var end = std.mem.indexOfScalar(u8, target[1..], '/') orelse {
-        return null;
-    };
-    end += 1;
-
-    const id = std.fmt.parseInt(usize, target[1..end], 10) catch {
-        return null;
-    };
-
-    return .{
-        .id = id,
-        .target = target[end..],
-    };
-}
-
-pub fn handleConnection(alloc: Allocator, www_root: ?[]const u8, chamber_paths: []const []const u8, connection: std.net.Server.Connection, simulations: []Simulation) !void {
-    var read_buffer: [4096]u8 = undefined;
-    var http_server = std.http.Server.init(connection, &read_buffer);
-
-    var req = try http_server.receiveHead();
-
-    if (std.mem.eql(u8, req.head.target, "/num_simulations")) {
-        var buf: [6]u8 = undefined;
-        const num_sims_s = try std.fmt.bufPrint(&buf, "{d}", .{simulations.len});
-        try req.respond(num_sims_s, .{
-            .extra_headers = &.{.{
-                .name = "Content-Type",
-                .value = "application/json",
-            }},
-        });
-        return;
-    }
-
-    if (isTaggedRequest(req.head.target)) |tagged_url| {
-        if (tagged_url.id >= simulations.len) {
-            return error.InvalidId;
-        }
-        const simulation = &simulations[tagged_url.id];
-        const target = tagged_url.target;
-
-        if (std.mem.eql(u8, target, "/simulation_state")) {
-            const ResponseJson = struct {
-                balls: [Simulation.num_balls]Ball,
-                chamber_state: []const u8,
-            };
-
-            var chamber_save: []const u8 = &.{};
-            defer alloc.free(chamber_save);
-
-            const response_content = blk: {
-                simulation.mutex.lock();
-                defer simulation.mutex.unlock();
-
-                chamber_save = try simulation.chamber_mod.save(alloc, simulation.chamber_state);
-
-                break :blk ResponseJson{
-                    .balls = simulation.balls,
-                    .chamber_state = chamber_save,
-                };
-            };
-            var send_buffer: [4096]u8 = undefined;
-            var response = req.respondStreaming(.{
-                .send_buffer = &send_buffer,
-                .respond_options = .{
-                    .extra_headers = &.{.{
-                        .name = "Content-Type",
-                        .value = "application/json",
-                    }},
-                },
-            });
-            try std.json.stringify(response_content, .{ .emit_strings_as_arrays = true }, response.writer());
-            try response.end();
-            return;
-        } else if (std.mem.eql(u8, target, "/save")) {
-            simulation.mutex.lock();
-            defer simulation.mutex.unlock();
-            try simulation.history.save("history.json");
-            try req.respond("", .{});
-            return;
-        } else if (std.mem.eql(u8, target, "/reset")) {
-            simulation.mutex.lock();
-            defer simulation.mutex.unlock();
-            simulation.reset();
-            try req.respond("", .{});
-            return;
-        } else if (std.mem.eql(u8, target, "/chamber.wasm")) {
-            try respondWithFileContents(&req, chamber_paths[tagged_url.id]);
-            return;
-        }
-    }
-
-    if (www_root) |root| {
-        if (getResourcePathAlloc(alloc, root, req.head.target)) |p| {
-            defer alloc.free(p);
-            try respondWithFileContents(&req, p);
-            return;
-        } else |_| {
-            std.log.err("{s} not found in resource dir, falling back to embedded", .{req.head.target});
-        }
-    }
-
-    var send_buffer: [4096]u8 = undefined;
-    var response = req.respondStreaming(.{
-        .send_buffer = &send_buffer,
-        .respond_options = .{
-            .extra_headers = &.{.{
-                .name = "Content-Type",
-                .value = try pathToContentType(req.head.target),
-            }},
-        },
-    });
-    const content = try embeddedLookup(req.head.target);
-    try response.writer().writeAll(content);
-    try response.end();
-}
+const Server = @import("Server.zig");
+const EventLoop = @import("EventLoop.zig");
 
 pub fn runSimulation(simulations: []Simulation, shutdown: *std.atomic.Value(bool)) !void {
     const start = try std.time.Instant.now();
@@ -222,8 +29,6 @@ pub fn runSimulation(simulations: []Simulation, shutdown: *std.atomic.Value(bool
         }
     }
 }
-
-fn signal_handler(_: c_int) align(1) callconv(.C) void {}
 
 const Args = struct {
     alloc: Allocator,
@@ -369,17 +174,38 @@ const Args = struct {
     }
 };
 
+const SignalHandler = struct {
+    fd: i32,
+
+    fn init() !SignalHandler {
+        var sig_mask = std.posix.empty_sigset;
+        std.os.linux.sigaddset(&sig_mask, std.posix.SIG.INT);
+        std.posix.sigprocmask(std.posix.SIG.BLOCK, &sig_mask, null);
+        const fd = try std.posix.signalfd(-1, &sig_mask, 0);
+
+        return .{
+            .fd = fd,
+        };
+    }
+
+    fn deinit(self: *SignalHandler) void {
+        std.posix.close(self.fd);
+    }
+
+    fn handler(_: *SignalHandler) EventLoop.EventHandler {
+        return EventLoop.EventHandler{
+            .data = null,
+            .callback = struct {
+                fn f(_: ?*anyopaque) EventLoop.HandlerAction {
+                    return .server_shutdown;
+                }
+            }.f,
+            .deinit = null,
+        };
+    }
+};
+
 pub fn main() !void {
-    var sa = std.posix.Sigaction{
-        .handler = .{
-            .handler = &signal_handler,
-        },
-        .mask = std.posix.empty_sigset,
-        .flags = 0,
-    };
-
-    try std.posix.sigaction(std.posix.SIG.INT, &sa, null);
-
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
 
@@ -389,10 +215,6 @@ pub fn main() !void {
     defer args.deinit();
 
     const addr = std.net.Address.initIp4(.{ 127, 0, 0, 1 }, args.port);
-    var tcp_server = try addr.listen(.{
-        .reuse_address = true,
-        .reuse_port = true,
-    });
 
     var wasm_loader = try wasm_chamber.WasmLoader.init();
     defer wasm_loader.deinit();
@@ -447,14 +269,16 @@ pub fn main() !void {
     defer thread.join();
     defer shutdown.store(true, .unordered);
 
-    while (true) {
-        var fds: [1]std.posix.pollfd = .{.{ .fd = tcp_server.stream.handle, .events = std.posix.POLL.IN, .revents = 0 }};
-        _ = try std.posix.ppoll(&fds, null, null);
-        const connection = try tcp_server.accept();
-        defer connection.stream.close();
+    var event_loop = try EventLoop.init(alloc);
+    defer event_loop.deinit();
 
-        handleConnection(alloc, args.www_root, args.chambers, connection, simulations.items) catch |e| {
-            std.log.err("Failed to handle connection: {any}", .{e});
-        };
-    }
+    var signal_handler = try SignalHandler.init();
+    defer signal_handler.deinit();
+    try event_loop.register(signal_handler.fd, signal_handler.handler());
+
+    var server = try Server.init(alloc, addr, &event_loop, args.www_root, args.chambers, simulations.items);
+    defer server.deinit();
+    try event_loop.register(server.server.stream.handle, server.handler());
+
+    try event_loop.run();
 }
