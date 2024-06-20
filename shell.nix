@@ -23,6 +23,8 @@ pkgs.mkShell {
     nodePackages.jshint
     rustup
     binaryen
+    openssl
+    curl
   ];
 }
 

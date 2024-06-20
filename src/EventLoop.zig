@@ -31,6 +31,22 @@ pub fn deinit(self: *EventLoop) void {
     std.posix.close(self.epollfd);
 }
 
+pub fn unregister(self: *EventLoop, fd: i32) !void {
+    var it = self.handlers.iter();
+    while (it.next()) |item| {
+        if (item.handler.fd == fd) {
+            if (item.handler.handler.deinit) |f| {
+                f(item.handler.handler.data);
+            }
+            self.handlers.release(self.alloc, item.idx);
+            try std.posix.epoll_ctl(self.epollfd, std.os.linux.EPOLL.CTL_DEL, fd, null);
+            return;
+        }
+    }
+
+    return error.NotFound;
+}
+
 pub fn register(self: *EventLoop, fd: i32, handler: EventHandler) !void {
     const handler_id = try self.handlers.create(self.alloc);
     errdefer self.handlers.release(self.alloc, handler_id);
@@ -126,6 +142,40 @@ fn ItemPool(comptime T: type) type {
 
         const Self = @This();
 
+        const Iterator = struct {
+            i: usize = 0,
+            available_i: usize = 0,
+            pool: *Self,
+
+            const Output = struct {
+                idx: usize,
+                handler: EventHandlerPriv,
+            };
+
+            pub fn next(self: *Iterator) ?Output {
+                const items = self.pool.elems.items;
+                const available = self.pool.available.items;
+
+                while (true) {
+                    if (self.i >= items.len) {
+                        return null;
+                    }
+
+                    if (self.available_i < available.len and self.i == available[self.available_i]) {
+                        self.i += 1;
+                        self.available_i += 1;
+                        continue;
+                    }
+
+                    defer self.i += 1;
+                    return .{
+                        .idx = self.i,
+                        .handler = items[self.i],
+                    };
+                }
+            }
+        };
+
         pub fn deinit(self: *Self, alloc: Allocator) void {
             self.elems.deinit(alloc);
             self.available.deinit(alloc);
@@ -142,6 +192,20 @@ fn ItemPool(comptime T: type) type {
 
         pub fn get(self: *Self, id: usize) *T {
             return &self.elems.items[id];
+        }
+
+        pub fn iter(self: *Self) Iterator {
+            const lessThan = struct {
+                fn f(_: void, lhs: usize, rhs: usize) bool {
+                    return lhs < rhs;
+                }
+            }.f;
+
+            std.mem.sort(usize, self.available.items, {}, lessThan);
+
+            return .{
+                .pool = self,
+            };
         }
 
         pub fn release(self: *Self, alloc: Allocator, id: usize) void {

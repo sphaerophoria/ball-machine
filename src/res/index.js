@@ -148,6 +148,14 @@ async function init() {
     );
     new Chamber(i, obj);
   }
+
+  const userinfo_response = await fetch("/userinfo");
+  const userinfo = await userinfo_response.json();
+  if (userinfo.match(/^[0-9a-zA-Z]{1,16}$/)) {
+    document.getElementById("username").innerHTML = "hello " + userinfo;
+  } else {
+    document.getElementById("username").innerHTML = "hello <REDACTED>";
+  }
 }
 
 window.onload = init;
