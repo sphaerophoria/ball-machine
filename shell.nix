@@ -14,6 +14,7 @@ pkgs.mkShell {
     valgrind
     # For linter script on push hook
     python3
+    python3Packages.cryptography
     wabt
     cmake
     clang-tools
@@ -23,6 +24,8 @@ pkgs.mkShell {
     nodePackages.jshint
     rustup
     binaryen
+    pyright
+    openssl
   ];
 }
 

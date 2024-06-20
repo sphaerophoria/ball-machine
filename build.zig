@@ -88,4 +88,15 @@ pub fn build(b: *std.Build) !void {
     exe.linkLibC();
     exe.linkLibCpp();
     b.installArtifact(exe);
+
+    const userinfo = b.addExecutable(.{
+        .name = "userinfo",
+        .root_source_file = b.path("src/userinfo.zig"),
+        .target = target,
+        .optimize = opt,
+    });
+    userinfo.linkSystemLibrary("ssl");
+    userinfo.linkSystemLibrary("crypto");
+    userinfo.linkLibC();
+    b.installArtifact(userinfo);
 }
