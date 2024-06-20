@@ -1,6 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const resources = @import("resources");
+const userinfo = @import("userinfo.zig");
 const Allocator = std.mem.Allocator;
 const wasm_chamber = @import("wasm_chamber.zig");
 const physics = @import("physics.zig");
@@ -38,6 +39,8 @@ const Args = struct {
     port: u16,
     history_file: ?[]const u8,
     history_start_idx: usize,
+    client_id: []const u8,
+    client_secret: []const u8,
     it: std.process.ArgIterator,
 
     const Option = enum {
@@ -45,6 +48,8 @@ const Args = struct {
         @"--www-root",
         @"--port",
         @"--load",
+        @"--client-id",
+        @"--client-secret",
         @"--help",
     };
 
@@ -56,6 +61,8 @@ const Args = struct {
         var port: ?u16 = null;
         var history_file: ?[]const u8 = null;
         var history_start_idx: usize = 0;
+        var client_id: ?[]const u8 = null;
+        var client_secret: ?[]const u8 = null;
         var chambers = std.ArrayList([]const u8).init(alloc);
         errdefer chambers.deinit();
 
@@ -101,6 +108,18 @@ const Args = struct {
                         help(process_name);
                     };
                 },
+                .@"--client-id" => {
+                    client_id = it.next() orelse {
+                        print("--client-id provided with no argument\n", .{});
+                        help(process_name);
+                    };
+                },
+                .@"--client-secret" => {
+                    client_secret = it.next() orelse {
+                        print("--client-secret provided with no argument\n", .{});
+                        help(process_name);
+                    };
+                },
                 .@"--help" => {
                     help(process_name);
                 },
@@ -127,6 +146,14 @@ const Args = struct {
             },
             .history_file = history_file,
             .history_start_idx = history_start_idx,
+            .client_id = client_id orelse {
+                print("--client-id not provided\n", .{});
+                help(process_name);
+            },
+            .client_secret = client_secret orelse {
+                print("--client-id not provided\n", .{});
+                help(process_name);
+            },
             .it = it,
         };
     }
@@ -159,6 +186,12 @@ const Args = struct {
                 },
                 .@"--port" => {
                     print("Which port to run the webserver on", .{});
+                },
+                .@"--client-id" => {
+                    print("client id of twitch application", .{});
+                },
+                .@"--client-secret" => {
+                    print("client secret of twitch application", .{});
                 },
                 .@"--help" => {
                     print("Show this help", .{});
@@ -277,12 +310,23 @@ pub fn main() !void {
     defer signal_handler.deinit();
     try event_loop.register(signal_handler.fd, signal_handler.handler());
 
-    var sim_server = Server{
-        .alloc = alloc,
-        .www_root = args.www_root,
-        .chamber_paths = args.chambers,
-        .simulations = simulations.items,
-    };
+    const twitch_jwk =
+        \\{"keys":[{"alg":"RS256","e":"AQAB","kid":"1","kty":"RSA","n":"6lq9MQ-q6hcxr7kOUp-tHlHtdcDsVLwVIw13iXUCvuDOeCi0VSuxCCUY6UmMjy53dX00ih2E4Y4UvlrmmurK0eG26b-HMNNAvCGsVXHU3RcRhVoHDaOwHwU72j7bpHn9XbP3Q3jebX6KIfNbei2MiR0Wyb8RZHE-aZhRYO8_-k9G2GycTpvc-2GBsP8VHLUKKfAs2B6sW3q3ymU6M0L-cFXkZ9fHkn9ejs-sqZPhMJxtBPBxoUIUQFTgv4VXTSv914f_YkNw-EjuwbgwXMvpyr06EyfImxHoxsZkFYB-qBYHtaMxTnFsZBr6fn8Ha2JqT1hoP7Z5r5wxDu3GQhKkHw","use":"sig"}]}
+    ;
+
+    const jwt_keys = try userinfo.JsonWebKeys.parse(alloc, twitch_jwk);
+    defer jwt_keys.deinit(alloc);
+
+    var sim_server = try Server.init(
+        alloc,
+        args.www_root,
+        args.chambers,
+        simulations.items,
+        std.mem.trim(u8, args.client_id, &std.ascii.whitespace),
+        std.mem.trim(u8, args.client_secret, &std.ascii.whitespace),
+        jwt_keys.items,
+        &event_loop,
+    );
     var tcp_server = try TcpServer.init(addr, sim_server.spawner(), &event_loop);
     defer tcp_server.deinit();
     try event_loop.register(tcp_server.server.stream.handle, tcp_server.handler());

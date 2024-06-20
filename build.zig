@@ -87,5 +87,8 @@ pub fn build(b: *std.Build) !void {
     exe.addIncludePath(b.path("deps/wasmtime/crates/c-api/include"));
     exe.linkLibC();
     exe.linkLibCpp();
+    exe.linkSystemLibrary("ssl");
+    exe.linkSystemLibrary("crypto");
+    exe.linkSystemLibrary("curl");
     b.installArtifact(exe);
 }

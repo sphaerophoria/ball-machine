@@ -21,9 +21,15 @@ pub const ContentType = enum {
 };
 
 pub const Header = struct {
+    const Field = struct {
+        key: []const u8,
+        value: []const u8,
+    };
+
     status: std.http.Status,
     content_type: ContentType,
     content_length: usize,
+    extra: []const Field = &.{},
 
     pub fn format(self: *const Header, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) @TypeOf(writer).Error!void {
         _ = options;
@@ -33,8 +39,7 @@ pub const Header = struct {
             "HTTP/1.1 {d} {s}\r\n" ++
                 "Content-Type: {s}\r\n" ++
                 "Connection: close\r\n" ++
-                "Content-Length: {d}\r\n" ++
-                "\r\n",
+                "Content-Length: {d}\r\n",
             .{
                 @intFromEnum(self.status),
                 self.status.phrase() orelse "",
@@ -42,6 +47,12 @@ pub const Header = struct {
                 self.content_length,
             },
         );
+
+        for (self.extra) |field| {
+            try writer.print("{s}: {s}\r\n", .{ field.key, field.value });
+        }
+
+        try writer.writeAll("\r\n");
     }
 };
 pub const Reader = struct {
@@ -238,7 +249,7 @@ pub const HttpConnection = struct {
         deinit,
     };
 
-    const Action = enum {
+    pub const Action = enum {
         none,
         feed,
         deinit,
@@ -336,5 +347,118 @@ pub const HttpConnection = struct {
                 },
             }
         }
+    }
+};
+
+pub const QueryParamsIt = struct {
+    target: []const u8,
+
+    const Param = struct {
+        key: []const u8,
+        val: []const u8,
+    };
+
+    pub fn init(target: []const u8) QueryParamsIt {
+        const idx = std.mem.indexOfScalar(u8, target, '?') orelse {
+            return .{
+                .target = &.{},
+            };
+        };
+
+        return .{ .target = target[idx..] };
+    }
+
+    pub fn next(self: *QueryParamsIt) ?Param {
+        if (self.target.len < 2) {
+            return null;
+        }
+
+        const key_start = 1;
+        const key_end = std.mem.indexOfScalar(u8, self.target, '=') orelse {
+            return null;
+        };
+
+        const value_start = key_end + 1;
+        if (value_start >= self.target.len) {
+            return null;
+        }
+        var value_end = std.mem.indexOfScalar(u8, self.target[1..], '&') orelse self.target.len - 1;
+        value_end += 1;
+
+        defer {
+            if (value_end >= self.target.len) {
+                self.target = &.{};
+            } else {
+                self.target = self.target[value_end..];
+            }
+        }
+
+        return .{
+            .key = self.target[key_start..key_end],
+            .val = self.target[value_start..value_end],
+        };
+    }
+};
+
+pub const CookieIt = struct {
+    const Cookie = struct {
+        key: []const u8,
+        val: []const u8,
+    };
+
+    line: []const u8,
+
+    pub fn init(header_buf: []const u8) CookieIt {
+        var it = std.mem.splitSequence(u8, header_buf, "\r\n");
+        while (it.next()) |line| {
+            const cookie_key = "cookie: ";
+            if (std.ascii.startsWithIgnoreCase(line, cookie_key)) {
+                return .{
+                    // - 1 to avoid having to length check, space is included
+                    // in key so it's essentially nothing
+                    .line = line[cookie_key.len - 1 ..],
+                };
+            }
+        }
+
+        return .{
+            .line = &.{},
+        };
+    }
+
+    pub fn next(self: *CookieIt) ?Cookie {
+        if (self.line.len == 0) {
+            return null;
+        }
+
+        const key_end = std.mem.indexOfScalar(u8, self.line, '=') orelse {
+            self.line = &.{};
+            return null;
+        };
+
+        const val_start = key_end + 1;
+        if (val_start >= self.line.len) {
+            self.line = &.{};
+            return null;
+        }
+
+        const val_end = if (std.mem.indexOfScalar(u8, self.line[val_start..], ';')) |idx| idx + val_start else self.line.len;
+
+        const key_trimmed = std.mem.trim(u8, self.line[0..key_end], &std.ascii.whitespace);
+        const val_trimmed = std.mem.trim(u8, self.line[val_start..val_end], &std.ascii.whitespace);
+
+        defer {
+            const new_start = val_end + 1;
+            if (new_start >= self.line.len) {
+                self.line = &.{};
+            } else {
+                self.line = self.line[new_start..];
+            }
+        }
+
+        return .{
+            .key = key_trimmed,
+            .val = val_trimmed,
+        };
     }
 };
