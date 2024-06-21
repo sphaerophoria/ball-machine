@@ -5,6 +5,7 @@ const Allocator = std.mem.Allocator;
 const wasm_chamber = @import("wasm_chamber.zig");
 const physics = @import("physics.zig");
 const Simulation = @import("Simulation.zig");
+const TcpServer = @import("TcpServer.zig");
 const Server = @import("Server.zig");
 const EventLoop = @import("EventLoop.zig");
 
@@ -276,9 +277,15 @@ pub fn main() !void {
     defer signal_handler.deinit();
     try event_loop.register(signal_handler.fd, signal_handler.handler());
 
-    var server = try Server.init(alloc, addr, &event_loop, args.www_root, args.chambers, simulations.items);
-    defer server.deinit();
-    try event_loop.register(server.server.stream.handle, server.handler());
+    var sim_server = Server{
+        .alloc = alloc,
+        .www_root = args.www_root,
+        .chamber_paths = args.chambers,
+        .simulations = simulations.items,
+    };
+    var tcp_server = try TcpServer.init(addr, sim_server.spawner(), &event_loop);
+    defer tcp_server.deinit();
+    try event_loop.register(tcp_server.server.stream.handle, tcp_server.handler());
 
     try event_loop.run();
 }

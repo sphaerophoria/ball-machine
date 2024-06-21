@@ -1,6 +1,7 @@
 const std = @import("std");
 const mem = std.mem;
 const Allocator = std.mem.Allocator;
+const EventLoop = @import("EventLoop.zig");
 
 pub const ContentType = enum {
     @"application/json",
@@ -224,6 +225,116 @@ const WriteState = struct {
                 return true;
             }
             self.amount_written += written;
+        }
+    }
+};
+
+pub const HttpConnection = struct {
+    const State = enum {
+        read,
+        write,
+        wait,
+        finished,
+        deinit,
+    };
+
+    const Action = enum {
+        none,
+        feed,
+        deinit,
+    };
+
+    alloc: Allocator,
+    tcp: std.net.Stream,
+    state: State = .read,
+
+    reader: Reader = .{},
+    writer: Writer = .{},
+
+    pub fn init(alloc: Allocator, tcp: std.net.Stream) !HttpConnection {
+        return .{
+            .alloc = alloc,
+            .tcp = tcp,
+        };
+    }
+
+    pub fn deinit(self: *HttpConnection) void {
+        self.reset();
+        self.tcp.close();
+    }
+
+    pub fn setResponse(self: *HttpConnection, writer: Writer) void {
+        std.debug.assert(self.state == .wait);
+
+        self.writer = writer;
+        self.state = .write;
+    }
+
+    fn reset(self: *HttpConnection) void {
+        self.reader.deinit(self.alloc);
+        self.writer.deinit(self.alloc);
+
+        self.state = .read;
+        self.reader = .{};
+        self.writer = .{};
+    }
+
+    fn read(self: *HttpConnection) !void {
+        try self.reader.poll(self.alloc, self.tcp);
+
+        if (self.reader.state == .deinit) {
+            self.state = .deinit;
+            return;
+        }
+
+        if (self.reader.state == .finished) {
+            self.state = .wait;
+            return;
+        }
+    }
+
+    fn write(self: *HttpConnection) !void {
+        try self.writer.poll(self.tcp);
+
+        if (self.writer.state == .deinit) {
+            self.state = .deinit;
+            return;
+        }
+
+        if (self.writer.state == .finished) {
+            self.state = .finished;
+            return;
+        }
+    }
+
+    pub fn poll(self: *HttpConnection) Action {
+        return self.pollError() catch |e| {
+            if (e == error.WouldBlock) {
+                return .none;
+            }
+
+            std.log.err("Error {any}", .{e});
+
+            return .deinit;
+        };
+    }
+
+    fn pollError(self: *HttpConnection) !Action {
+        while (true) {
+            switch (self.state) {
+                .read => try self.read(),
+                .write => try self.write(),
+                .wait => {
+                    return .feed;
+                },
+                .deinit => return .deinit,
+                .finished => {
+                    // For the time being it seems that connection re-use
+                    // actually reduces the amount of requests a browser will
+                    // make per second, making the simulation look choppy
+                    return .deinit;
+                },
+            }
         }
     }
 };
