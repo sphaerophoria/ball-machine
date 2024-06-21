@@ -1,6 +1,7 @@
 const std = @import("std");
 const mem = std.mem;
 const Allocator = std.mem.Allocator;
+const EventLoop = @import("EventLoop.zig");
 
 pub const ContentType = enum {
     @"application/json",
@@ -224,6 +225,145 @@ const WriteState = struct {
                 return true;
             }
             self.amount_written += written;
+        }
+    }
+};
+
+pub const HttpResponseGenerator = struct {
+    const Generator = fn (?*anyopaque, Reader) anyerror!Writer;
+    data: ?*anyopaque,
+    generate_fn: *const Generator,
+
+    fn generate(self: *const HttpResponseGenerator, reader: Reader) !Writer {
+        return self.generate_fn(self.data, reader);
+    }
+};
+
+pub const HttpConnection = struct {
+    const State = enum {
+        read,
+        write,
+        finished,
+        deinit,
+    };
+
+    alloc: Allocator,
+    tcp: std.net.Stream,
+    state: State = .read,
+    response_generator: HttpResponseGenerator,
+
+    reader: Reader = .{},
+    writer: Writer = .{},
+
+    pub fn init(alloc: Allocator, tcp: std.net.Stream, response_generator: HttpResponseGenerator) !*HttpConnection {
+        const ret = try alloc.create(HttpConnection);
+        errdefer alloc.destroy(ret);
+
+        ret.* = .{
+            .alloc = alloc,
+            .tcp = tcp,
+            .response_generator = response_generator,
+        };
+        return ret;
+    }
+
+    fn reset(self: *HttpConnection) void {
+        self.reader.deinit(self.alloc);
+        self.writer.deinit(self.alloc);
+
+        self.state = .read;
+        self.reader = .{};
+        self.writer = .{};
+    }
+
+    pub fn deinit(self: *HttpConnection) void {
+        self.reset();
+        self.tcp.close();
+        self.alloc.destroy(self);
+    }
+
+    pub fn handler(self: *HttpConnection) EventLoop.EventHandler {
+        const callback = struct {
+            fn f(userdata: ?*anyopaque) EventLoop.HandlerAction {
+                const server: *HttpConnection = @ptrCast(@alignCast(userdata));
+                return server.pollNoError();
+            }
+        }.f;
+
+        const opaque_deinit = struct {
+            fn f(userdata: ?*anyopaque) void {
+                const server: *HttpConnection = @ptrCast(@alignCast(userdata));
+                server.deinit();
+            }
+        }.f;
+
+        return .{
+            .data = self,
+            .callback = callback,
+            .deinit = opaque_deinit,
+        };
+    }
+
+    fn setupResponse(self: *HttpConnection) !void {
+        errdefer self.state = .deinit;
+        defer self.state = .write;
+
+        self.writer = try self.response_generator.generate(self.reader);
+    }
+
+    fn read(self: *HttpConnection) !void {
+        try self.reader.poll(self.alloc, self.tcp);
+
+        if (self.reader.state == .deinit) {
+            self.state = .deinit;
+            return;
+        }
+
+        if (self.reader.state == .finished) {
+            try self.setupResponse();
+            return;
+        }
+    }
+
+    fn write(self: *HttpConnection) !void {
+        try self.writer.poll(self.tcp);
+
+        if (self.writer.state == .deinit) {
+            self.state = .deinit;
+            return;
+        }
+
+        if (self.writer.state == .finished) {
+            self.state = .finished;
+            return;
+        }
+    }
+
+    fn pollNoError(self: *HttpConnection) EventLoop.HandlerAction {
+        return self.poll() catch |e| {
+            if (e == error.WouldBlock) {
+                return .none;
+            }
+
+            std.log.err("Error {any}", .{e});
+
+            return .deinit;
+        };
+    }
+
+    fn poll(self: *HttpConnection) !EventLoop.HandlerAction {
+        while (true) {
+            switch (self.state) {
+                .read => try self.read(),
+                .write => try self.write(),
+                .deinit => return .deinit,
+                .finished => {
+                    // For the time being it seems that connection re-use
+                    // actually reduces the amount of requests a browser will
+                    // make per second, making the simulation look choppy
+                    return .deinit;
+                },
+            }
         }
     }
 };
