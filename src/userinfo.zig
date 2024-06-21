@@ -332,26 +332,27 @@ const Server = struct {
 
     fn responseGenerator(self: *Server) http.HttpResponseGenerator {
         const generate_fn = struct {
-            fn f(userdata: ?*anyopaque, reader: http.Reader) anyerror!http.Writer {
+            fn f(userdata: ?*anyopaque, conn: *http.HttpConnection) anyerror!?http.Writer {
                 const self_: *Server = @ptrCast(@alignCast(userdata));
-                return self_.generateResponse(reader);
+                return self_.generateResponse(conn.reader);
             }
         }.f;
 
         return .{
             .data = self,
             .generate_fn = generate_fn,
+            .deinit_fn = null,
         };
     }
 
-    fn generateResponse(self: *Server, reader: http.Reader) !http.Writer {
+    fn generateResponse(self: *Server, reader: http.Reader) !?http.Writer {
         _ = reader;
         const response_header = http.Header{
             .status = .ok,
             .content_type = http.ContentType.@"text/html",
             .content_length = index_html.len,
         };
-        return http.Writer.init(self.alloc, response_header, index_html, false);
+        return try http.Writer.init(self.alloc, response_header, index_html, false);
     }
 };
 

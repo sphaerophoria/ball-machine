@@ -29,7 +29,7 @@ pub fn spawner(self: *Server) ConnectionSpawner {
     };
 }
 
-fn generateResponse(self: *Server, reader: http.Reader) !http.Writer {
+fn generateResponse(self: *Server, reader: http.Reader) !?http.Writer {
     if (std.mem.eql(u8, reader.target, "/num_simulations")) {
         const num_sims_s = try std.fmt.allocPrint(self.alloc, "{d}", .{self.simulations.len});
         errdefer self.alloc.free(num_sims_s);
@@ -147,15 +147,16 @@ fn generateResponse(self: *Server, reader: http.Reader) !http.Writer {
 
 fn responseGenerator(self: *Server) http.HttpResponseGenerator {
     const generate_fn = struct {
-        fn f(userdata: ?*anyopaque, reader: http.Reader) anyerror!http.Writer {
+        fn f(userdata: ?*anyopaque, conn: *http.HttpConnection) anyerror!?http.Writer {
             const self_: *Server = @ptrCast(@alignCast(userdata));
-            return self_.generateResponse(reader);
+            return self_.generateResponse(conn.reader);
         }
     }.f;
 
     return .{
         .data = self,
         .generate_fn = generate_fn,
+        .deinit_fn = null,
     };
 }
 

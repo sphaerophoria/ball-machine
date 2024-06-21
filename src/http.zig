@@ -1,4 +1,5 @@
 const std = @import("std");
+const Atomic = std.atomic.Value;
 const mem = std.mem;
 const Allocator = std.mem.Allocator;
 const EventLoop = @import("EventLoop.zig");
@@ -230,12 +231,19 @@ const WriteState = struct {
 };
 
 pub const HttpResponseGenerator = struct {
-    const Generator = fn (?*anyopaque, Reader) anyerror!Writer;
+    const Generator = fn (?*anyopaque, *HttpConnection) anyerror!?Writer;
     data: ?*anyopaque,
     generate_fn: *const Generator,
+    deinit_fn: ?*const fn (?*anyopaque) void,
 
-    fn generate(self: *const HttpResponseGenerator, reader: Reader) !Writer {
-        return self.generate_fn(self.data, reader);
+    fn generate(self: *const HttpResponseGenerator, conn: *HttpConnection) !?Writer {
+        return self.generate_fn(self.data, conn);
+    }
+
+    pub fn deinit(self: *const HttpResponseGenerator) void {
+        if (self.deinit_fn) |f| {
+            f(self.data);
+        }
     }
 };
 
@@ -243,14 +251,18 @@ pub const HttpConnection = struct {
     const State = enum {
         read,
         write,
+        wait,
         finished,
         deinit,
     };
+
+    const RefCount = Atomic(u8);
 
     alloc: Allocator,
     tcp: std.net.Stream,
     state: State = .read,
     response_generator: HttpResponseGenerator,
+    ref_count: RefCount,
 
     reader: Reader = .{},
     writer: Writer = .{},
@@ -263,6 +275,7 @@ pub const HttpConnection = struct {
             .alloc = alloc,
             .tcp = tcp,
             .response_generator = response_generator,
+            .ref_count = RefCount.init(1),
         };
         return ret;
     }
@@ -276,7 +289,29 @@ pub const HttpConnection = struct {
         self.writer = .{};
     }
 
+    pub fn ref(self: *HttpConnection) *HttpConnection {
+        _ = self.ref_count.fetchAdd(1, .monotonic);
+        return self;
+    }
+
     pub fn deinit(self: *HttpConnection) void {
+        var val = self.ref_count.load(.monotonic);
+        while (true) {
+            const new_val = val - 1;
+            const ret = self.ref_count.cmpxchgWeak(val, new_val, .monotonic, .monotonic);
+            if (ret != null) {
+                val = ret.?;
+            } else {
+                val = new_val;
+                break;
+            }
+        }
+
+        if (val != 0) {
+            return;
+        }
+
+        self.response_generator.deinit();
         self.reset();
         self.tcp.close();
         self.alloc.destroy(self);
@@ -304,11 +339,15 @@ pub const HttpConnection = struct {
         };
     }
 
-    fn setupResponse(self: *HttpConnection) !void {
+    fn setupResponse(self: *HttpConnection) !bool {
         errdefer self.state = .deinit;
-        defer self.state = .write;
 
-        self.writer = try self.response_generator.generate(self.reader);
+        self.writer = try self.response_generator.generate(self) orelse {
+            self.state = .wait;
+            return false;
+        };
+        self.state = .write;
+        return true;
     }
 
     fn read(self: *HttpConnection) !void {
@@ -320,7 +359,7 @@ pub const HttpConnection = struct {
         }
 
         if (self.reader.state == .finished) {
-            try self.setupResponse();
+            self.state = .wait;
             return;
         }
     }
@@ -356,6 +395,11 @@ pub const HttpConnection = struct {
             switch (self.state) {
                 .read => try self.read(),
                 .write => try self.write(),
+                .wait => {
+                    if (!try self.setupResponse()) {
+                        return .none;
+                    }
+                },
                 .deinit => return .deinit,
                 .finished => {
                     // For the time being it seems that connection re-use
