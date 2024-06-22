@@ -44,23 +44,21 @@ pub fn deinit(self: *TcpServer) void {
 }
 
 pub fn handler(self: *TcpServer) EventLoop.EventHandler {
-    const callback = struct {
-        fn f(data: ?*anyopaque) EventLoop.HandlerAction {
-            return TcpServer.acceptTcpConnection(@ptrCast(@alignCast(data))) catch |e| {
-                std.log.err("Failed to create http connection: {any}", .{e});
-                return .none;
-            };
-        }
-    }.f;
-
     return .{
         .data = self,
-        .callback = callback,
+        .callback = EventLoop.EventHandler.makeCallback(TcpServer, acceptTcpConnection),
         .deinit = null,
     };
 }
 
-fn acceptTcpConnection(self: *TcpServer) anyerror!EventLoop.HandlerAction {
+fn acceptTcpConnection(self: *TcpServer) EventLoop.HandlerAction {
+    return self.acceptTcpConnectionFailable() catch |e| {
+        std.log.err("Failed to create http connection: {any}", .{e});
+        return .none;
+    };
+}
+
+fn acceptTcpConnectionFailable(self: *TcpServer) anyerror!EventLoop.HandlerAction {
     var connection = self.server.accept() catch {
         return .deinit;
     };

@@ -94,9 +94,29 @@ pub const HandlerAction = enum {
 
 pub const EventHandler = struct {
     const Callback = *const fn (?*anyopaque) HandlerAction;
+    const Deinit = *const fn (?*anyopaque) void;
+
+    pub fn makeCallback(comptime T: type, f: fn (*T) HandlerAction) Callback {
+        return struct {
+            fn wrapper(data: ?*anyopaque) EventLoop.HandlerAction {
+                const concrete: *T = @ptrCast(@alignCast(data));
+                return f(concrete);
+            }
+        }.wrapper;
+    }
+
+    pub fn makeDeinit(comptime T: type, f: fn (*T) void) Deinit {
+        return struct {
+            fn wrapper(data: ?*anyopaque) void {
+                const concrete: *T = @ptrCast(@alignCast(data));
+                return f(concrete);
+            }
+        }.wrapper;
+    }
+
     data: ?*anyopaque,
     callback: Callback,
-    deinit: ?*const fn (?*anyopaque) void,
+    deinit: ?Deinit,
 };
 
 fn ItemPool(comptime T: type) type {
