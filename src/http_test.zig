@@ -1,33 +1,114 @@
 const std = @import("std");
 const http = @import("http.zig");
+const Atomic = std.atomic.Value;
 const Allocator = std.mem.Allocator;
 const TcpServer = @import("TcpServer.zig");
 const EventLoop = @import("EventLoop.zig");
 
-const ConnectionData = struct {
-    alloc: Allocator,
+const Connection = struct {
+    const RefCount = Atomic(u8);
+
     server: *Server,
     event_fd: ?i32,
+    inner: http.HttpConnection,
+    ref_count: RefCount,
 
-    fn init(alloc: Allocator, server: *Server) !*ConnectionData {
-        const ret = try alloc.create(ConnectionData);
+
+    fn init(server: *Server, stream: std.net.Stream) !*Connection {
+        var inner = try http.HttpConnection.init(server.alloc, stream);
+        errdefer inner.deinit();
+        const ret = try server.alloc.create(Connection);
         ret.* = .{
-            .alloc = alloc,
+            .inner = inner,
             .event_fd = null,
             .server = server,
+            .ref_count = RefCount.init(1),
         };
         return ret;
     }
 
-    fn deinit(self: *ConnectionData) void {
-        // Close fd and remove from list
+    fn deinit(self: *Connection) void {
+        var val = self.ref_count.load(.monotonic);
+        while (true) {
+            const new_val = val - 1;
+            const ret = self.ref_count.cmpxchgWeak(val, new_val, .monotonic, .monotonic);
+            if (ret != null) {
+                val = ret.?;
+            } else {
+                val = new_val;
+                break;
+            }
+        }
+
+        if (val != 0) {
+            return;
+        }
+
+        // FIXME: Close fd and remove from list
         if (self.event_fd) |fd| {
             std.posix.close(fd);
         }
-        self.alloc.destroy(self);
+        self.inner.deinit();
+        self.server.alloc.destroy(self);
     }
 
-    fn generateResponse(self: *ConnectionData, conn: *http.HttpConnection) !?http.Writer {
+    fn poll(self: *Connection) EventLoop.HandlerAction {
+        std.debug.print("poll\n", .{});
+        defer std.debug.print("exit\n", .{});
+        var do_deinit = false;
+        while (true) {
+            const action = self.inner.poll();
+            switch (action) {
+                .none => {
+                    if (do_deinit) {
+                        return .deinit;
+                    }
+                    return .none;
+                },
+                .feed => {
+                    const response = self.generateResponse() catch |e| {
+                        std.log.err("Failed to generate response: {any}", .{e});
+                        return .deinit;
+                    } orelse {
+                        return .none;
+                    };
+
+                    std.debug.print("Response set\n", .{});
+                    self.inner.setResponse(response);
+                    if (self.event_fd != null) {
+                        do_deinit = true;
+                    }
+                },
+                .deinit => return .deinit,
+            }
+        }
+
+    }
+
+    fn handler(self: *Connection) EventLoop.EventHandler {
+
+        const callback_fn = struct {
+            fn f(data: ?*anyopaque) EventLoop.HandlerAction {
+                const conn: *Connection = @ptrCast(@alignCast(data));
+                return conn.poll();
+            }
+        }.f;
+
+        const deinit_fn = struct {
+            fn f(data: ?*anyopaque) void{
+                const conn: *Connection = @ptrCast(@alignCast(data));
+                conn.deinit();
+            }
+        }.f;
+
+        return .{
+            .data = self,
+            .callback = callback_fn,
+            .deinit = deinit_fn,
+        };
+    }
+
+    fn generateResponse(self: *Connection) !?http.Writer {
         if (self.server.enter_pressed.load(.monotonic)) {
             std.debug.print("Enter was pressed\n", .{});
 
@@ -49,17 +130,22 @@ const ConnectionData = struct {
                 self.event_fd = null;
             }
 
-            var new_conn = conn.ref();
-            errdefer new_conn.deinit();
+            self.ref();
+            errdefer self.deinit();
 
             // FIXME: remove  from list on failure
             try self.server.event_fd_list.addFd(self.event_fd.?);
-            try self.server.event_loop.register(self.event_fd.?, new_conn.handler());
+            try self.server.event_loop.register(self.event_fd.?, self.handler());
         }
 
         std.debug.print("Deferrring\n", .{});
         return null;
     }
+
+    pub fn ref(self: *Connection) void {
+        _ = self.ref_count.fetchAdd(1, .monotonic);
+    }
+
 };
 
 const Server = struct {
@@ -92,36 +178,8 @@ const Server = struct {
     }
 
     fn spawn(self: *Server, stream: std.net.Stream) !EventLoop.EventHandler {
-        const generator = try self.responseGenerator();
-        errdefer generator.deinit();
-
-        var http_server = try http.HttpConnection.init(self.alloc, stream, generator);
-        return http_server.handler();
-    }
-
-    fn responseGenerator(self: *Server) !http.HttpResponseGenerator {
-        const connection_data = try ConnectionData.init(self.alloc, self);
-        errdefer connection_data.deinit();
-
-        const generate_fn = struct {
-            fn f(userdata: ?*anyopaque, conn: *http.HttpConnection) anyerror!?http.Writer {
-                const self_: *ConnectionData = @ptrCast(@alignCast(userdata));
-                return self_.generateResponse(conn);
-            }
-        }.f;
-
-        const deinit_fn = struct {
-            fn f(userdata: ?*anyopaque) void {
-                const self_: *ConnectionData = @ptrCast(@alignCast(userdata));
-                return self_.deinit();
-            }
-        }.f;
-
-        return .{
-            .data = connection_data,
-            .generate_fn = generate_fn,
-            .deinit_fn = deinit_fn,
-        };
+        const connection = try Connection.init(self, stream);
+        return connection.handler();
     }
 };
 

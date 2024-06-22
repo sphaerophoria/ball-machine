@@ -99,4 +99,12 @@ pub fn build(b: *std.Build) !void {
     userinfo.linkSystemLibrary("crypto");
     userinfo.linkLibC();
     b.installArtifact(userinfo);
+
+    const http_test = b.addExecutable(.{
+        .name = "http_test",
+        .root_source_file = b.path("src/http_test.zig"),
+        .target = target,
+        .optimize = opt,
+    });
+    b.installArtifact(http_test);
 }
