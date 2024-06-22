@@ -29,7 +29,7 @@ pub fn spawner(self: *Server) ConnectionSpawner {
     };
 }
 
-fn generateResponse(self: *Server, reader: http.Reader) !?http.Writer {
+fn generateResponse(self: *Server, reader: http.Reader) !http.Writer {
     if (std.mem.eql(u8, reader.target, "/num_simulations")) {
         const num_sims_s = try std.fmt.allocPrint(self.alloc, "{d}", .{self.simulations.len});
         errdefer self.alloc.free(num_sims_s);
@@ -145,24 +145,75 @@ fn generateResponse(self: *Server, reader: http.Reader) !?http.Writer {
     return try http.Writer.init(self.alloc, response_header, content, false);
 }
 
-fn responseGenerator(self: *Server) http.HttpResponseGenerator {
-    const generate_fn = struct {
-        fn f(userdata: ?*anyopaque, conn: *http.HttpConnection) anyerror!?http.Writer {
-            const self_: *Server = @ptrCast(@alignCast(userdata));
-            return self_.generateResponse(conn.reader);
-        }
-    }.f;
+const Connection = struct {
+    server: *Server,
+    inner: http.HttpConnection,
 
-    return .{
-        .data = self,
-        .generate_fn = generate_fn,
-        .deinit_fn = null,
-    };
-}
+    fn init(server: *Server, stream: std.net.Stream) !*Connection {
+        var inner = try http.HttpConnection.init(server.alloc, stream);
+        errdefer inner.deinit();
+
+        const ret = try server.alloc.create(Connection);
+        errdefer server.alloc.free(ret);
+
+        ret.* = .{
+            .server = server,
+            .inner = inner,
+        };
+
+        return ret;
+    }
+
+    fn deinit(self: *Connection) void {
+        self.inner.deinit();
+        self.server.alloc.destroy(self);
+    }
+
+    fn handler(self: *Connection) EventLoop.EventHandler {
+
+        const callback_fn = struct {
+            fn f(data: ?*anyopaque) EventLoop.HandlerAction {
+                const conn: *Connection = @ptrCast(@alignCast(data));
+                return conn.poll();
+            }
+        }.f;
+
+        const deinit_fn = struct {
+            fn f(data: ?*anyopaque) void{
+                const conn: *Connection = @ptrCast(@alignCast(data));
+                conn.deinit();
+            }
+        }.f;
+
+        return .{
+            .data = self,
+            .callback = callback_fn,
+            .deinit = deinit_fn,
+        };
+    }
+
+    fn poll(self: *Connection) EventLoop.HandlerAction {
+        while (true) {
+            const action = self.inner.poll();
+            switch (action) {
+                .none => return .none,
+                .feed => {
+                    const response = self.server.generateResponse(self.inner.reader) catch |e| {
+                        std.log.err("Failed to generate response: {any}", .{e});
+                        return .deinit;
+                    };
+                    self.inner.setResponse(response);
+                },
+                .deinit => return .deinit,
+            }
+        }
+
+    }
+};
 
 fn spawn(self: *Server, stream: std.net.Stream) !EventLoop.EventHandler {
-    var http_server = try http.HttpConnection.init(self.alloc, stream, self.responseGenerator());
-    return http_server.handler();
+    var connection = try Connection.init(self, stream);
+    return connection.handler();
 }
 
 const UrlComponents = struct {

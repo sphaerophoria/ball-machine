@@ -230,23 +230,6 @@ const WriteState = struct {
     }
 };
 
-pub const HttpResponseGenerator = struct {
-    const Generator = fn (?*anyopaque, *HttpConnection) anyerror!?Writer;
-    data: ?*anyopaque,
-    generate_fn: *const Generator,
-    deinit_fn: ?*const fn (?*anyopaque) void,
-
-    fn generate(self: *const HttpResponseGenerator, conn: *HttpConnection) !?Writer {
-        return self.generate_fn(self.data, conn);
-    }
-
-    pub fn deinit(self: *const HttpResponseGenerator) void {
-        if (self.deinit_fn) |f| {
-            f(self.data);
-        }
-    }
-};
-
 pub const HttpConnection = struct {
     const State = enum {
         read,
@@ -256,28 +239,61 @@ pub const HttpConnection = struct {
         deinit,
     };
 
-    const RefCount = Atomic(u8);
+    const Action = enum {
+        none,
+        feed,
+        deinit,
+    };
+
+    //const RefCount = Atomic(u8);
 
     alloc: Allocator,
     tcp: std.net.Stream,
     state: State = .read,
-    response_generator: HttpResponseGenerator,
-    ref_count: RefCount,
+    //ref_count: RefCount,
 
     reader: Reader = .{},
     writer: Writer = .{},
 
-    pub fn init(alloc: Allocator, tcp: std.net.Stream, response_generator: HttpResponseGenerator) !*HttpConnection {
-        const ret = try alloc.create(HttpConnection);
-        errdefer alloc.destroy(ret);
-
-        ret.* = .{
+    pub fn init(alloc: Allocator, tcp: std.net.Stream) !HttpConnection {
+        return .{
             .alloc = alloc,
             .tcp = tcp,
-            .response_generator = response_generator,
-            .ref_count = RefCount.init(1),
+            //.ref_count = RefCount.init(1),
         };
-        return ret;
+    }
+
+    //pub fn ref(self: *HttpConnection) *HttpConnection {
+    //    _ = self.ref_count.fetchAdd(1, .monotonic);
+    //    return self;
+    //}
+
+    pub fn deinit(self: *HttpConnection) void {
+        //var val = self.ref_count.load(.monotonic);
+        //while (true) {
+        //    const new_val = val - 1;
+        //    const ret = self.ref_count.cmpxchgWeak(val, new_val, .monotonic, .monotonic);
+        //    if (ret != null) {
+        //        val = ret.?;
+        //    } else {
+        //        val = new_val;
+        //        break;
+        //    }
+        //}
+
+        //if (val != 0) {
+        //    return;
+        //}
+
+        self.reset();
+        self.tcp.close();
+    }
+
+    pub fn setResponse(self: *HttpConnection, writer: Writer) void {
+        std.debug.assert(self.state == .wait);
+
+        self.writer = writer;
+        self.state = .write;
     }
 
     fn reset(self: *HttpConnection) void {
@@ -289,66 +305,6 @@ pub const HttpConnection = struct {
         self.writer = .{};
     }
 
-    pub fn ref(self: *HttpConnection) *HttpConnection {
-        _ = self.ref_count.fetchAdd(1, .monotonic);
-        return self;
-    }
-
-    pub fn deinit(self: *HttpConnection) void {
-        var val = self.ref_count.load(.monotonic);
-        while (true) {
-            const new_val = val - 1;
-            const ret = self.ref_count.cmpxchgWeak(val, new_val, .monotonic, .monotonic);
-            if (ret != null) {
-                val = ret.?;
-            } else {
-                val = new_val;
-                break;
-            }
-        }
-
-        if (val != 0) {
-            return;
-        }
-
-        self.response_generator.deinit();
-        self.reset();
-        self.tcp.close();
-        self.alloc.destroy(self);
-    }
-
-    pub fn handler(self: *HttpConnection) EventLoop.EventHandler {
-        const callback = struct {
-            fn f(userdata: ?*anyopaque) EventLoop.HandlerAction {
-                const server: *HttpConnection = @ptrCast(@alignCast(userdata));
-                return server.pollNoError();
-            }
-        }.f;
-
-        const opaque_deinit = struct {
-            fn f(userdata: ?*anyopaque) void {
-                const server: *HttpConnection = @ptrCast(@alignCast(userdata));
-                server.deinit();
-            }
-        }.f;
-
-        return .{
-            .data = self,
-            .callback = callback,
-            .deinit = opaque_deinit,
-        };
-    }
-
-    fn setupResponse(self: *HttpConnection) !bool {
-        errdefer self.state = .deinit;
-
-        self.writer = try self.response_generator.generate(self) orelse {
-            self.state = .wait;
-            return false;
-        };
-        self.state = .write;
-        return true;
-    }
 
     fn read(self: *HttpConnection) !void {
         try self.reader.poll(self.alloc, self.tcp);
@@ -378,8 +334,8 @@ pub const HttpConnection = struct {
         }
     }
 
-    fn pollNoError(self: *HttpConnection) EventLoop.HandlerAction {
-        return self.poll() catch |e| {
+    pub fn poll(self: *HttpConnection) Action {
+        return self.pollError() catch |e| {
             if (e == error.WouldBlock) {
                 return .none;
             }
@@ -390,15 +346,13 @@ pub const HttpConnection = struct {
         };
     }
 
-    fn poll(self: *HttpConnection) !EventLoop.HandlerAction {
+    fn pollError(self: *HttpConnection) !Action {
         while (true) {
             switch (self.state) {
                 .read => try self.read(),
                 .write => try self.write(),
                 .wait => {
-                    if (!try self.setupResponse()) {
-                        return .none;
-                    }
+                    return .feed;
                 },
                 .deinit => return .deinit,
                 .finished => {

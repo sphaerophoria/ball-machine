@@ -299,63 +299,6 @@ const JsonWebToken = struct {
     }
 };
 
-const Server = struct {
-    alloc: Allocator,
-
-    const index_html =
-        \\<!doctype html>
-        \\<head>
-        \\</head>
-        \\<body>
-        \\  <button>Log in with twitch</button>
-        \\</body>
-    ;
-
-    pub fn spawner(self: *Server) TcpServer.ConnectionSpawner {
-        const spawn_fn = struct {
-            fn f(data: ?*anyopaque, stream: std.net.Stream) anyerror!EventLoop.EventHandler {
-                const self_: *Server = @ptrCast(@alignCast(data));
-                return self_.spawn(stream);
-            }
-        }.f;
-
-        return .{
-            .data = self,
-            .spawn_fn = spawn_fn,
-        };
-    }
-
-    fn spawn(self: *Server, stream: std.net.Stream) !EventLoop.EventHandler {
-        var http_server = try http.HttpConnection.init(self.alloc, stream, self.responseGenerator());
-        return http_server.handler();
-    }
-
-    fn responseGenerator(self: *Server) http.HttpResponseGenerator {
-        const generate_fn = struct {
-            fn f(userdata: ?*anyopaque, conn: *http.HttpConnection) anyerror!?http.Writer {
-                const self_: *Server = @ptrCast(@alignCast(userdata));
-                return self_.generateResponse(conn.reader);
-            }
-        }.f;
-
-        return .{
-            .data = self,
-            .generate_fn = generate_fn,
-            .deinit_fn = null,
-        };
-    }
-
-    fn generateResponse(self: *Server, reader: http.Reader) !?http.Writer {
-        _ = reader;
-        const response_header = http.Header{
-            .status = .ok,
-            .content_type = http.ContentType.@"text/html",
-            .content_length = index_html.len,
-        };
-        return try http.Writer.init(self.alloc, response_header, index_html, false);
-    }
-};
-
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
@@ -376,13 +319,4 @@ pub fn main() !void {
 
     var event_loop = try EventLoop.init(alloc);
     defer event_loop.deinit();
-
-    var response_server = Server{
-        .alloc = alloc,
-    };
-    const addr = std.net.Address.initIp4(.{ 127, 0, 0, 1 }, 8000);
-    var tcp_server = try TcpServer.init(addr, response_server.spawner(), &event_loop);
-    defer tcp_server.deinit();
-    try event_loop.register(tcp_server.server.stream.handle, tcp_server.handler());
-    try event_loop.run();
 }
