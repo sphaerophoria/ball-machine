@@ -13,7 +13,6 @@ const Connection = struct {
     inner: http.HttpConnection,
     ref_count: RefCount,
 
-
     fn init(server: *Server, stream: std.net.Stream) !*Connection {
         var inner = try http.HttpConnection.init(server.alloc, stream);
         errdefer inner.deinit();
@@ -82,11 +81,9 @@ const Connection = struct {
                 .deinit => return .deinit,
             }
         }
-
     }
 
     fn handler(self: *Connection) EventLoop.EventHandler {
-
         const callback_fn = struct {
             fn f(data: ?*anyopaque) EventLoop.HandlerAction {
                 const conn: *Connection = @ptrCast(@alignCast(data));
@@ -95,7 +92,7 @@ const Connection = struct {
         }.f;
 
         const deinit_fn = struct {
-            fn f(data: ?*anyopaque) void{
+            fn f(data: ?*anyopaque) void {
                 const conn: *Connection = @ptrCast(@alignCast(data));
                 conn.deinit();
             }
@@ -145,7 +142,6 @@ const Connection = struct {
     pub fn ref(self: *Connection) void {
         _ = self.ref_count.fetchAdd(1, .monotonic);
     }
-
 };
 
 const Server = struct {

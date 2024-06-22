@@ -305,7 +305,6 @@ pub const HttpConnection = struct {
         self.writer = .{};
     }
 
-
     fn read(self: *HttpConnection) !void {
         try self.reader.poll(self.alloc, self.tcp);
 

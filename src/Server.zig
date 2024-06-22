@@ -170,7 +170,6 @@ const Connection = struct {
     }
 
     fn handler(self: *Connection) EventLoop.EventHandler {
-
         const callback_fn = struct {
             fn f(data: ?*anyopaque) EventLoop.HandlerAction {
                 const conn: *Connection = @ptrCast(@alignCast(data));
@@ -179,7 +178,7 @@ const Connection = struct {
         }.f;
 
         const deinit_fn = struct {
-            fn f(data: ?*anyopaque) void{
+            fn f(data: ?*anyopaque) void {
                 const conn: *Connection = @ptrCast(@alignCast(data));
                 conn.deinit();
             }
@@ -207,7 +206,6 @@ const Connection = struct {
                 .deinit => return .deinit,
             }
         }
-
     }
 };
 
