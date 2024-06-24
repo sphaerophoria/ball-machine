@@ -59,25 +59,29 @@ fn acceptTcpConnection(self: *TcpServer) EventLoop.HandlerAction {
 }
 
 fn acceptTcpConnectionFailable(self: *TcpServer) anyerror!EventLoop.HandlerAction {
-    var connection = self.server.accept() catch {
-        return .deinit;
-    };
+    while (true) {
+        var connection = self.server.accept() catch |e| {
+            if (e == error.WouldBlock) {
+                return .none;
+            }
+            return .deinit;
+        };
 
-    try setNonblock(connection.stream);
+        try setNonblock(connection.stream);
 
-    const conn_handler = self.spawner.spawn(connection.stream) catch |e| {
-        connection.stream.close();
-        return e;
-    };
+        const conn_handler = self.spawner.spawn(connection.stream) catch |e| {
+            connection.stream.close();
+            return e;
+        };
 
-    errdefer {
-        if (conn_handler.deinit) |f| {
-            f(conn_handler.data);
+        errdefer {
+            if (conn_handler.deinit) |f| {
+                f(conn_handler.data);
+            }
         }
-    }
 
-    try self.event_loop.register(connection.stream.handle, conn_handler);
-    return .none;
+        try self.event_loop.register(connection.stream.handle, conn_handler);
+    }
 }
 
 fn setNonblock(conn: std.net.Stream) !void {
