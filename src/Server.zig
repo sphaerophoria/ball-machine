@@ -106,6 +106,8 @@ fn generateResponse(self: *Server, reader: http.Reader) !http.Writer {
             return try http.Writer.init(self.alloc, response_header, "", false);
         } else if (std.mem.eql(u8, target, "/chamber.wasm")) {
             var f = try std.fs.cwd().openFile(self.chamber_paths[tagged_url.id], .{});
+            defer f.close();
+
             const chamber = try f.readToEndAlloc(self.alloc, 10_000_000);
             errdefer self.alloc.free(chamber);
 
