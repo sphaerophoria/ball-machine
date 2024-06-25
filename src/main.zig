@@ -1,36 +1,11 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const resources = @import("resources");
 const userinfo = @import("userinfo.zig");
 const Allocator = std.mem.Allocator;
-const wasm_chamber = @import("wasm_chamber.zig");
-const physics = @import("physics.zig");
-const Simulation = @import("Simulation.zig");
 const TcpServer = @import("TcpServer.zig");
 const Server = @import("Server.zig");
 const EventLoop = @import("EventLoop.zig");
-
-pub fn runSimulation(simulations: []Simulation, shutdown: *std.atomic.Value(bool)) !void {
-    const start = try std.time.Instant.now();
-
-    const initial_step = simulations[0].num_steps_taken;
-    std.debug.assert(simulations.len == 1 or initial_step == 0);
-
-    while (!shutdown.load(.unordered)) {
-        std.time.sleep(1_666_666);
-
-        const now = try std.time.Instant.now();
-        const elapsed_time_ns = now.since(start);
-
-        const desired_num_steps_taken = initial_step + elapsed_time_ns / Simulation.step_len_ns;
-
-        for (simulations) |*ctx| {
-            while (ctx.num_steps_taken < desired_num_steps_taken) {
-                ctx.step();
-            }
-        }
-    }
-}
+const App = @import("App.zig");
 
 const Args = struct {
     alloc: Allocator,
@@ -41,6 +16,7 @@ const Args = struct {
     history_start_idx: usize,
     client_id: []const u8,
     client_secret: []const u8,
+    db: []const u8,
     it: std.process.ArgIterator,
 
     const Option = enum {
@@ -50,6 +26,7 @@ const Args = struct {
         @"--load",
         @"--client-id",
         @"--client-secret",
+        @"--db",
         @"--help",
     };
 
@@ -63,6 +40,7 @@ const Args = struct {
         var history_start_idx: usize = 0;
         var client_id: ?[]const u8 = null;
         var client_secret: ?[]const u8 = null;
+        var db: ?[]const u8 = null;
         var chambers = std.ArrayList([]const u8).init(alloc);
         errdefer chambers.deinit();
 
@@ -120,6 +98,12 @@ const Args = struct {
                         help(process_name);
                     };
                 },
+                .@"--db" => {
+                    db = it.next() orelse {
+                        print("--db provided with no argument\n", .{});
+                        help(process_name);
+                    };
+                },
                 .@"--help" => {
                     help(process_name);
                 },
@@ -152,6 +136,10 @@ const Args = struct {
             },
             .client_secret = client_secret orelse {
                 print("--client-id not provided\n", .{});
+                help(process_name);
+            },
+            .db = db orelse {
+                print("--db not provided\n", .{});
                 help(process_name);
             },
             .it = it,
@@ -192,6 +180,9 @@ const Args = struct {
                 },
                 .@"--client-secret" => {
                     print("client secret of twitch application", .{});
+                },
+                .@"--db" => {
+                    print("folder where data goes", .{});
                 },
                 .@"--help" => {
                     print("Show this help", .{});
@@ -239,6 +230,17 @@ const SignalHandler = struct {
     }
 };
 
+fn initAppFromArgs(alloc: Allocator, args: Args) !App {
+    if (args.history_file) |history_file| {
+        if (args.chambers.len != 1) {
+            return error.TooManyChambers;
+        }
+        return App.initFromHistory(alloc, args.chambers[0], args.db, history_file, args.history_start_idx);
+    } else {
+        return App.init(alloc, args.chambers, args.db);
+    }
+}
+
 pub fn main() !void {
     var signal_handler = try SignalHandler.init();
     defer signal_handler.deinit();
@@ -253,58 +255,14 @@ pub fn main() !void {
 
     const addr = std.net.Address.initIp4(.{ 127, 0, 0, 1 }, args.port);
 
-    var wasm_loader = try wasm_chamber.WasmLoader.init();
-    defer wasm_loader.deinit();
-    var chamber_mods = std.ArrayList(wasm_chamber.WasmChamber).init(alloc);
+    var app = try initAppFromArgs(alloc, args);
+    defer app.deinit();
+
+    const thread = try std.Thread.spawn(.{}, App.run, .{&app});
     defer {
-        for (chamber_mods.items) |*chamber_mod| {
-            chamber_mod.deinit();
-        }
-        chamber_mods.deinit();
+        app.shutdown.store(true, .unordered);
+        thread.join();
     }
-
-    for (args.chambers) |chamber_path| {
-        const chamber_f = try std.fs.cwd().openFile(chamber_path, .{});
-        defer chamber_f.close();
-        const chamber_content = try chamber_f.readToEndAlloc(alloc, 1_000_000);
-        defer alloc.free(chamber_content);
-
-        var chamber = try wasm_loader.load(alloc, chamber_content);
-        errdefer chamber.deinit();
-
-        try chamber_mods.append(chamber);
-    }
-
-    var simulations = std.ArrayList(Simulation).init(alloc);
-    defer {
-        for (simulations.items) |*sim| {
-            sim.deinit();
-        }
-        simulations.deinit();
-    }
-
-    for (chamber_mods.items) |chamber_mod| {
-        if (args.history_file) |history_file_path| {
-            std.debug.assert(chamber_mods.items.len == 1);
-            var simulation_ctx = try Simulation.initFromHistory(alloc, chamber_mod, history_file_path, args.history_start_idx);
-            errdefer simulation_ctx.deinit();
-
-            try simulations.append(simulation_ctx);
-        } else {
-            var seed: usize = undefined;
-            try std.posix.getrandom(std.mem.asBytes(&seed));
-
-            var simulation_ctx = try Simulation.init(alloc, seed, chamber_mod);
-            errdefer simulation_ctx.deinit();
-
-            try simulations.append(simulation_ctx);
-        }
-    }
-
-    var shutdown = std.atomic.Value(bool).init(false);
-    const thread = try std.Thread.spawn(.{}, runSimulation, .{ simulations.items, &shutdown });
-    defer thread.join();
-    defer shutdown.store(true, .unordered);
 
     var event_loop = try EventLoop.init(alloc);
     defer event_loop.deinit();
@@ -321,8 +279,7 @@ pub fn main() !void {
     var sim_server = try Server.init(
         alloc,
         args.www_root,
-        args.chambers,
-        simulations.items,
+        &app,
         std.mem.trim(u8, args.client_id, &std.ascii.whitespace),
         std.mem.trim(u8, args.client_secret, &std.ascii.whitespace),
         jwt_keys.items,

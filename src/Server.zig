@@ -11,13 +11,13 @@ const physics = @import("physics.zig");
 const future = @import("future.zig");
 const Ball = physics.Ball;
 const ConnectionSpawner = @import("TcpServer.zig").ConnectionSpawner;
+const App = @import("App.zig");
 
 const Server = @This();
 
 alloc: Allocator,
 www_root: ?[]const u8,
-chamber_paths: []const []const u8,
-simulations: []Simulation,
+app: *App,
 client_id: []const u8,
 auth_request_thread: *AuthRequestThread,
 auth_request_handle: std.Thread,
@@ -27,8 +27,7 @@ auth: Authentication,
 pub fn init(
     alloc: Allocator,
     www_root: ?[]const u8,
-    chamber_paths: []const []const u8,
-    simulations: []Simulation,
+    app: *App,
     client_id: []const u8,
     client_secret: []const u8,
     jwt_keys: []const userinfo.RsaParams,
@@ -51,8 +50,7 @@ pub fn init(
     return Server{
         .alloc = alloc,
         .www_root = www_root,
-        .chamber_paths = chamber_paths,
-        .simulations = simulations,
+        .app = app,
         .client_id = trimmed_id,
         .auth = auth,
         .auth_request_thread = auth_request_thread,
@@ -208,7 +206,7 @@ const Connection = struct {
 
     fn processRequest(self: *Connection, reader: http.Reader) !?http.Writer {
         if (std.mem.eql(u8, reader.target, "/num_simulations")) {
-            const num_sims_s = try std.fmt.allocPrint(self.server.alloc, "{d}", .{self.server.simulations.len});
+            const num_sims_s = try std.fmt.allocPrint(self.server.alloc, "{d}", .{self.server.app.simulations.items.len});
             errdefer self.server.alloc.free(num_sims_s);
 
             const response_header = http.Header{
@@ -220,10 +218,10 @@ const Connection = struct {
         }
 
         if (isTaggedRequest(reader.target)) |tagged_url| {
-            if (tagged_url.id >= self.server.simulations.len) {
+            if (tagged_url.id >= self.server.app.simulations.items.len) {
                 return error.InvalidId;
             }
-            const simulation = &self.server.simulations[tagged_url.id];
+            const simulation = &self.server.app.simulations.items[tagged_url.id];
             const target = tagged_url.target;
 
             if (std.mem.startsWith(u8, target, "/simulation_state")) {
@@ -282,7 +280,7 @@ const Connection = struct {
                 };
                 return try http.Writer.init(self.server.alloc, response_header, "", false);
             } else if (std.mem.eql(u8, target, "/chamber.wasm")) {
-                var f = try std.fs.cwd().openFile(self.server.chamber_paths[tagged_url.id], .{});
+                var f = try std.fs.cwd().openFile(self.server.app.chamber_paths.items[tagged_url.id], .{});
                 defer f.close();
 
                 const chamber = try f.readToEndAlloc(self.server.alloc, 10_000_000);
@@ -301,6 +299,26 @@ const Connection = struct {
             try self.queueAuthRequest();
             self.state = .waiting_auth;
             return null;
+        } else if (std.mem.eql(u8, reader.target, "/upload")) {
+            var parts = try http.parseMultipartReq(self.server.alloc, reader.header_buf, reader.buf.items);
+            defer parts.deinit();
+
+            const chamber = parts.get("chamber") orelse {
+                return error.NoChamber;
+            };
+            try self.server.app.appendChamber(chamber);
+
+            const response_header = http.Header{
+                .status = .see_other,
+                .content_type = .@"text/html",
+                .content_length = 0,
+                .extra = &.{ .{
+                        .key = "Location",
+                        .value = "/index.html",
+                    },
+                },
+            };
+            return try http.Writer.init(self.server.alloc, response_header, "", false);
         } else if (std.mem.eql(u8, reader.target, "/userinfo")) {
             var user = try self.server.auth.userForRequest(reader.header_buf) orelse {
                 const response_header = http.Header{

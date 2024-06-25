@@ -461,3 +461,180 @@ pub const CookieIt = struct {
         };
     }
 };
+
+fn extractContentTypeLine(header_buf: []const u8) ![]const u8 {
+    var header_it = std.mem.splitSequence(u8, header_buf, "\r\n");
+
+    while (header_it.next()) |line| {
+        const content_type_key = "content-type: ";
+        if (std.ascii.startsWithIgnoreCase(line, content_type_key)) {
+            return line[content_type_key.len..];
+        }
+    }
+
+    return error.NoContentType;
+}
+
+fn mimeTypeIsMultipart(mimetype: []const u8) bool {
+    const mimetype_trimmed = std.mem.trim(u8, mimetype, &std.ascii.whitespace);
+    return std.mem.eql(u8, mimetype_trimmed, "multipart/form-data");
+}
+
+fn getMultipartBoundary(alloc: Allocator, it: *std.mem.SplitIterator(u8, .scalar)) ![]const u8 {
+    var boundary_opt: ?[]const u8 = null;
+    while (it.next()) |segment| {
+        const key_end = std.mem.indexOfScalar(u8, segment, '=') orelse {
+            continue;
+        };
+
+        const val_start = key_end + 1;
+        if (val_start >= segment.len) {
+            continue;
+        }
+        const key = segment[0..key_end];
+        const key_trimmed = std.mem.trim(u8, key, &std.ascii.whitespace);
+        if (std.mem.eql(u8, key_trimmed, "boundary")) {
+            boundary_opt = segment[val_start..];
+            break;
+        }
+    }
+
+    const boundary = boundary_opt orelse {
+        return error.NoBoundary;
+    };
+
+    return try std.fmt.allocPrint(alloc, "--{s}", .{boundary});
+}
+
+const MultiPartIter = struct {
+    body_it: std.mem.SplitIterator(u8, .sequence),
+
+    const Output = struct {
+        name: []const u8,
+        content: []const u8,
+    };
+
+    fn init(body_buf: []const u8, boundary: []const u8) MultiPartIter {
+        const body_it = std.mem.splitSequence(u8, body_buf, boundary);
+        return .{
+            .body_it = body_it,
+        };
+    }
+
+    fn isValidSplit(split: []const u8) bool {
+        if (split.len < 2) {
+            return false;
+        }
+
+        if (std.mem.eql(u8, split, "--\r\n")) {
+            return false;
+        }
+
+        if (!std.mem.eql(u8, split[0..2], "\r\n")) {
+            return false;
+        }
+
+        return true;
+    }
+
+    fn trimSplit(split: []const u8) []const u8 {
+        // FIXME: We should probably check that there is immediately a boundary
+        // afterwards or we will just strip the end of a file
+        if (std.mem.endsWith(u8, split, "\r\n")) {
+            return split[0 .. split.len - 2];
+        }
+        return split;
+    }
+
+    fn findBodyStart(split: []const u8) ?usize {
+        const divider = "\r\n\r\n";
+        const header_end = std.mem.indexOf(u8, split, divider) orelse {
+            return null;
+        };
+        const ret = header_end + divider.len;
+        if (ret >= split.len) {
+            return null;
+        }
+        return ret;
+    }
+
+    fn findPartName(header: []const u8) ?[]const u8 {
+        var header_it = std.mem.splitSequence(u8, header, "\r\n");
+
+        while (header_it.next()) |header_field| {
+            if (std.ascii.startsWithIgnoreCase(header_field, "content-disposition: ")) {
+                const name_key = "name=";
+                const name_field_start = std.mem.indexOf(u8, header_field, name_key) orelse {
+                    continue;
+                };
+
+                const name_start = name_field_start + name_key.len + 1;
+
+                const name_field = header_field[name_start..];
+                var name_end = std.mem.indexOfScalar(u8, name_field, ';') orelse name_field.len;
+                name_end -= 1;
+
+                return name_field[0..name_end];
+            }
+        }
+
+        return null;
+    }
+
+    fn next(self: *MultiPartIter) ?Output {
+        while (true) {
+            const split_w_newline = self.body_it.next() orelse {
+                return null;
+            };
+
+            if (!isValidSplit(split_w_newline)) {
+                continue;
+            }
+
+            const split = trimSplit(split_w_newline);
+
+            const body_start = findBodyStart(split) orelse {
+                continue;
+            };
+
+            const header = split[0..body_start];
+            const body = split[body_start..];
+
+            const name = findPartName(header) orelse {
+                return null;
+            };
+
+            return .{
+                .name = name,
+                .content = body,
+            };
+        }
+    }
+};
+
+pub fn parseMultipartReq(alloc: Allocator, header_buf: []const u8, body_buf: []const u8) !std.StringHashMap([]const u8) {
+    const content_type = try extractContentTypeLine(header_buf);
+
+    var content_type_it = std.mem.splitScalar(u8, content_type, ';');
+
+    const mimetype = content_type_it.next() orelse {
+        return error.NoMimeType;
+    };
+
+    if (!mimeTypeIsMultipart(mimetype)) {
+        return error.NotMultipart;
+    }
+
+    const boundary = try getMultipartBoundary(alloc, &content_type_it);
+    defer alloc.free(boundary);
+
+    var ret = std.StringHashMap([]const u8).init(alloc);
+    errdefer ret.deinit();
+
+    var it = MultiPartIter.init(body_buf, boundary);
+    while (it.next()) |part| {
+        try ret.put(part.name, part.content);
+    }
+
+    return ret;
+}
