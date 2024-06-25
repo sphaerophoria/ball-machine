@@ -112,8 +112,8 @@ pub const WasmChamber = struct {
             std.log.err("Failed to free wasm memory", .{});
         };
 
-        const p = c.wasmtime_memory_data(self.context, self.memory);
-        @memcpy((p + wasm_offs)[0..data.len], data);
+        const wasm_data = try getWasmSlice(self.context, self.memory, wasm_offs, data.len);
+        @memcpy(wasm_data, data);
 
         var input: c.wasmtime_val_t = undefined;
         input.kind = c.WASMTIME_I32;
@@ -232,13 +232,12 @@ pub const WasmChamber = struct {
             return error.InternalError;
         }
 
-        const p = c.wasmtime_memory_data(self.context, self.memory);
         const offs = std.math.cast(usize, save_data) orelse {
             return error.InvalidOffset;
         };
-        const save_data_slice: [*]u8 = @ptrCast(@alignCast(p + offs));
+        const save_data_slice = try getWasmSlice(self.context, self.memory, offs, save_size);
 
-        return alloc.dupe(u8, save_data_slice[0..save_size]);
+        return alloc.dupe(u8, save_data_slice);
     }
 
     pub fn step(self: *WasmChamber, state: i32, balls: []Ball, delta: f32) !void {
@@ -249,9 +248,9 @@ pub const WasmChamber = struct {
             std.log.err("Failed to free balls ptr", .{});
         };
 
-        const p = c.wasmtime_memory_data(self.context, self.memory);
         const offs: usize = @intCast(balls_ptr);
-        const wasm_balls: [*]Ball = @ptrCast(@alignCast(p + offs));
+        const wasm_balls_data = try getWasmSlice(self.context, self.memory, offs, balls.len * @sizeOf(Ball));
+        const wasm_balls: []Ball = @alignCast(std.mem.bytesAsSlice(Ball, wasm_balls_data));
         @memcpy(wasm_balls[0..balls.len], balls);
 
         var inputs: [4]c.wasmtime_val_t = undefined;
@@ -285,12 +284,26 @@ fn logWasm(env: ?*anyopaque, caller: ?*c.wasmtime_caller_t, args: ?[*]const c.wa
 
     const memory: *c.wasmtime_memory_t = @ptrCast(@alignCast(env));
     const context = c.wasmtime_caller_context(caller);
-    const p = c.wasmtime_memory_data(context, memory);
     const offs: usize = @intCast(args.?[0].of.i32);
     const len: usize = @intCast(args.?[1].of.i32);
+    const data = getWasmSlice(context.?, memory, offs, len) catch {
+        std.debug.print("Failed to load wasm data to log\n", .{});
+        return null;
+    };
 
-    std.debug.print("{s}\n", .{p[offs .. offs + len]});
+    std.debug.print("{s}\n", .{data});
     return null;
+}
+
+fn getWasmSlice(context: *c.wasmtime_context_t, memory: *c.wasmtime_memory_t, offs: usize, len: usize) ![]u8 {
+    const p = c.wasmtime_memory_data(context, memory);
+    const max = c.wasmtime_memory_data_size(context, memory);
+
+    if (offs >= max or offs + len >= max) {
+        return error.InvalidMemory;
+    }
+
+    return p[offs..offs+len];
 }
 
 fn makeModuleFromData(data: []const u8, engine: ?*c.wasm_engine_t) !?*c.wasmtime_module_t {
