@@ -484,6 +484,7 @@ fn pathToContentType(path: []const u8) !http.ContentType {
         @".js",
         @".html",
         @".wasm",
+        @".css",
     };
 
     inline for (std.meta.fields(Extension)) |field| {
@@ -493,6 +494,7 @@ fn pathToContentType(path: []const u8) !http.ContentType {
                 .@".js" => return .@"text/javascript",
                 .@".html" => return .@"text/html",
                 .@".wasm" => return .@"application/wasm",
+                .@".css" => return .@"text/css",
             }
         }
     }

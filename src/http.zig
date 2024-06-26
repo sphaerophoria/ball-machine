@@ -8,6 +8,7 @@ pub const ContentType = enum {
     @"text/html",
     @"text/javascript",
     @"application/wasm",
+    @"text/css",
 
     fn name(self: ContentType) []const u8 {
         inline for (std.meta.fields(ContentType)) |field| {

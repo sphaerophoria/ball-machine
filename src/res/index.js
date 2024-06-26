@@ -46,8 +46,8 @@ class Chamber {
     this.canvas = document.createElement("canvas");
     canvas_div.appendChild(this.canvas);
 
-    this.canvas.width = 800;
-    this.canvas.height = 600;
+    this.canvas.width = 600;
+    this.canvas.height = 450;
 
     const button_div = document.createElement("div");
     top_div.append(button_div);
