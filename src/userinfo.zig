@@ -344,7 +344,7 @@ pub const Authentication = struct {
     pub fn deinit(self: *Authentication) void {
         var it = self.sessions.iterator();
         while (it.next()) |item| {
-            item.value_ptr.deinit();
+            item.value_ptr.deinit(self.alloc);
         }
         self.sessions.deinit(self.alloc);
     }

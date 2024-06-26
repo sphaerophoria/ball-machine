@@ -328,6 +328,8 @@ pub fn main() !void {
         jwt_keys.items,
         &event_loop,
     );
+    defer sim_server.deinit();
+
     var tcp_server = try TcpServer.init(addr, sim_server.spawner(), &event_loop);
     defer tcp_server.deinit();
     try event_loop.register(tcp_server.server.stream.handle, tcp_server.handler());
