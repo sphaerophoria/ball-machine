@@ -303,13 +303,11 @@ fn getWasmSlice(context: *c.wasmtime_context_t, memory: *c.wasmtime_memory_t, of
         return error.InvalidMemory;
     }
 
-    return p[offs..offs+len];
+    return p[offs .. offs + len];
 }
 
 fn makeModuleFromData(data: []const u8, engine: ?*c.wasm_engine_t) !?*c.wasmtime_module_t {
     var module: ?*c.wasmtime_module_t = null;
-    errdefer c.wasmtime_module_delete(module);
-
     const err = c.wasmtime_module_new(engine, data.ptr, data.len, &module);
     if (err != null) {
         return error.InitFailure;
