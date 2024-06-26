@@ -136,8 +136,14 @@ pub const Reader = struct {
         }
 
         const cl = self.content_length.?;
-        const expected_end_size = cl + self.header_size;
-        while (self.buf.items.len < expected_end_size) {
+        while (true) {
+            if (self.buf.items.len > cl) {
+                return error.InvalidData;
+            } else if (self.buf.items.len == cl) {
+                self.state = .finished;
+                return;
+            }
+
             var buf: [1024]u8 = undefined;
             const buf_len = try tcp.read(&buf);
             if (buf_len == 0) {
@@ -146,13 +152,6 @@ pub const Reader = struct {
             }
 
             try self.buf.appendSlice(alloc, buf[0..buf_len]);
-
-            if (self.buf.items.len > expected_end_size) {
-                return error.InvalidData;
-            } else if (self.buf.items.len == expected_end_size) {
-                self.state = .finished;
-                return;
-            }
         }
     }
 };
