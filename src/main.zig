@@ -240,6 +240,9 @@ const SignalHandler = struct {
 };
 
 pub fn main() !void {
+    var signal_handler = try SignalHandler.init();
+    defer signal_handler.deinit();
+
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
 
@@ -306,8 +309,6 @@ pub fn main() !void {
     var event_loop = try EventLoop.init(alloc);
     defer event_loop.deinit();
 
-    var signal_handler = try SignalHandler.init();
-    defer signal_handler.deinit();
     try event_loop.register(signal_handler.fd, signal_handler.handler());
 
     const twitch_jwk =
