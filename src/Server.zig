@@ -325,6 +325,8 @@ const Connection = struct {
             if (getResourcePathAlloc(self.server.alloc, root, reader.target)) |p| {
                 defer self.server.alloc.free(p);
                 var f = try std.fs.cwd().openFile(p, .{});
+                defer f.close();
+
                 const chamber = try f.readToEndAlloc(self.server.alloc, 10_000_000);
                 errdefer self.server.alloc.free(chamber);
 
