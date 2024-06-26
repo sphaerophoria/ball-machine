@@ -129,22 +129,7 @@ const Connection = struct {
         };
     }
 
-    fn extractCodeFromQueryParams(target: []const u8) ?[]const u8 {
-        var it = http.QueryParamsIt.init(target);
-        while (it.next()) |param| {
-            if (std.mem.eql(u8, param.key, "code")) {
-                return param.val;
-            }
-        }
-
-        return null;
-    }
-
-    fn queueAuthRequest(self: *Connection) !void {
-        const code = extractCodeFromQueryParams(self.inner.reader.target) orelse {
-            return error.NoCode;
-        };
-
+    fn queueAuthRequest(self: *Connection, code: []const u8) !void {
         // promise cleanup handled through req.deinit() below
         const promise = try future.Promise([]const u8).init(self.server.alloc);
         var req = AuthRequestQueue.Request{
@@ -205,26 +190,21 @@ const Connection = struct {
     }
 
     fn processRequest(self: *Connection, reader: http.Reader) !?http.Writer {
-        if (std.mem.eql(u8, reader.target, "/num_simulations")) {
-            const num_sims_s = try std.fmt.allocPrint(self.server.alloc, "{d}", .{self.server.app.simulations.items.len});
-            errdefer self.server.alloc.free(num_sims_s);
+        const url_purpose = try UrlPurpose.parse(reader.target);
+        switch (url_purpose) {
+            .num_simulations => {
+                const num_sims_s = try std.fmt.allocPrint(self.server.alloc, "{d}", .{self.server.app.simulations.items.len});
+                errdefer self.server.alloc.free(num_sims_s);
 
-            const response_header = http.Header{
-                .status = .ok,
-                .content_type = .@"application/json",
-                .content_length = num_sims_s.len,
-            };
-            return try http.Writer.init(self.server.alloc, response_header, num_sims_s, true);
-        }
-
-        if (isTaggedRequest(reader.target)) |tagged_url| {
-            if (tagged_url.id >= self.server.app.simulations.items.len) {
-                return error.InvalidId;
-            }
-            const simulation = &self.server.app.simulations.items[tagged_url.id];
-            const target = tagged_url.target;
-
-            if (std.mem.startsWith(u8, target, "/simulation_state")) {
+                const response_header = http.Header{
+                    .status = .ok,
+                    .content_type = .@"application/json",
+                    .content_length = num_sims_s.len,
+                };
+                return try http.Writer.init(self.server.alloc, response_header, num_sims_s, true);
+            },
+            .simulation_state => |id| {
+                const simulation = &self.server.app.simulations.items[id];
                 const ResponseJson = struct {
                     balls: [Simulation.num_balls]Ball,
                     chamber_state: []const u8,
@@ -258,7 +238,9 @@ const Connection = struct {
                     .content_length = response_body.len,
                 };
                 return try http.Writer.init(self.server.alloc, response_header, response_body, true);
-            } else if (std.mem.eql(u8, target, "/save")) {
+            },
+            .save => |id| {
+                const simulation = &self.server.app.simulations.items[id];
                 simulation.mutex.lock();
                 defer simulation.mutex.unlock();
 
@@ -269,7 +251,9 @@ const Connection = struct {
                     .content_length = 0,
                 };
                 return try http.Writer.init(self.server.alloc, response_header, "", false);
-            } else if (std.mem.eql(u8, target, "/reset")) {
+            },
+            .reset => |id| {
+                const simulation = &self.server.app.simulations.items[id];
                 simulation.mutex.lock();
                 defer simulation.mutex.unlock();
                 simulation.reset();
@@ -279,8 +263,9 @@ const Connection = struct {
                     .content_length = 0,
                 };
                 return try http.Writer.init(self.server.alloc, response_header, "", false);
-            } else if (std.mem.eql(u8, target, "/chamber.wasm")) {
-                var f = try std.fs.cwd().openFile(self.server.app.chamber_paths.items[tagged_url.id], .{});
+            },
+            .get_chamber => |id| {
+                var f = try std.fs.cwd().openFile(self.server.app.chamber_paths.items[id], .{});
                 defer f.close();
 
                 const chamber = try f.readToEndAlloc(self.server.alloc, 10_000_000);
@@ -288,84 +273,90 @@ const Connection = struct {
 
                 const response_header = http.Header{
                     .status = .ok,
-                    .content_type = try pathToContentType(target),
+                    .content_type = .@"application/wasm",
                     .content_length = chamber.len,
                 };
                 return try http.Writer.init(self.server.alloc, response_header, chamber, true);
-            }
-        } else if (std.mem.eql(u8, reader.target, "/login_redirect")) {
-            return try self.server.auth.makeTwitchRedirect(self.server.client_id);
-        } else if (std.mem.startsWith(u8, reader.target, "/login_code?")) {
-            try self.queueAuthRequest();
-            self.state = .waiting_auth;
-            return null;
-        } else if (std.mem.eql(u8, reader.target, "/upload")) {
-            var parts = try http.parseMultipartReq(self.server.alloc, reader.header_buf, reader.buf.items);
-            defer parts.deinit();
+            },
+            .login_redirect => {
+                return try self.server.auth.makeTwitchRedirect(self.server.client_id);
+            },
+            .login_code => |code| {
+                try self.queueAuthRequest(code);
+                self.state = .waiting_auth;
+                return null;
+            },
+            .upload => {
+                var parts = try http.parseMultipartReq(self.server.alloc, reader.header_buf, reader.buf.items);
+                defer parts.deinit();
 
-            const chamber = parts.get("chamber") orelse {
-                return error.NoChamber;
-            };
-            try self.server.app.appendChamber(chamber);
+                const chamber = parts.get("chamber") orelse {
+                    return error.NoChamber;
+                };
+                try self.server.app.appendChamber(chamber);
 
-            const response_header = http.Header{
-                .status = .see_other,
-                .content_type = .@"text/html",
-                .content_length = 0,
-                .extra = &.{ .{
-                        .key = "Location",
-                        .value = "/index.html",
-                    },
-                },
-            };
-            return try http.Writer.init(self.server.alloc, response_header, "", false);
-        } else if (std.mem.eql(u8, reader.target, "/userinfo")) {
-            var user = try self.server.auth.userForRequest(reader.header_buf) orelse {
                 const response_header = http.Header{
-                    .status = .not_found,
-                    .content_type = .@"application/json",
+                    .status = .see_other,
+                    .content_type = .@"text/html",
                     .content_length = 0,
+                    .extra = &.{
+                        .{
+                            .key = "Location",
+                            .value = "/index.html",
+                        },
+                    },
                 };
                 return try http.Writer.init(self.server.alloc, response_header, "", false);
-            };
-            defer user.deinit(self.server.alloc);
+            },
+            .userinfo => {
+                var user = try self.server.auth.userForRequest(reader.header_buf) orelse {
+                    const response_header = http.Header{
+                        .status = .not_found,
+                        .content_type = .@"application/json",
+                        .content_length = 0,
+                    };
+                    return try http.Writer.init(self.server.alloc, response_header, "", false);
+                };
+                defer user.deinit(self.server.alloc);
 
-            const username = try std.fmt.allocPrint(self.server.alloc, "\"{s}\"", .{user.username});
-            const response_header = http.Header{
-                .status = .ok,
-                .content_type = .@"application/json",
-                .content_length = username.len,
-            };
-            return try http.Writer.init(self.server.alloc, response_header, username, true);
-        }
+                const username = try std.fmt.allocPrint(self.server.alloc, "\"{s}\"", .{user.username});
+                const response_header = http.Header{
+                    .status = .ok,
+                    .content_type = .@"application/json",
+                    .content_length = username.len,
+                };
+                return try http.Writer.init(self.server.alloc, response_header, username, true);
+            },
+            .get_resource => {
+                if (self.server.www_root) |root| {
+                    if (getResourcePathAlloc(self.server.alloc, root, reader.target)) |p| {
+                        defer self.server.alloc.free(p);
+                        var f = try std.fs.cwd().openFile(p, .{});
+                        defer f.close();
 
-        if (self.server.www_root) |root| {
-            if (getResourcePathAlloc(self.server.alloc, root, reader.target)) |p| {
-                defer self.server.alloc.free(p);
-                var f = try std.fs.cwd().openFile(p, .{});
-                defer f.close();
+                        const chamber = try f.readToEndAlloc(self.server.alloc, 10_000_000);
+                        errdefer self.server.alloc.free(chamber);
 
-                const chamber = try f.readToEndAlloc(self.server.alloc, 10_000_000);
-                errdefer self.server.alloc.free(chamber);
+                        const response_header = http.Header{
+                            .status = .ok,
+                            .content_type = try pathToContentType(reader.target),
+                            .content_length = chamber.len,
+                        };
+                        return try http.Writer.init(self.server.alloc, response_header, chamber, true);
+                    } else |_| {
+                        std.log.err("{s} not found in resource dir, falling back to embedded", .{reader.target});
+                    }
+                }
 
+                const content = try embeddedLookup(reader.target);
                 const response_header = http.Header{
                     .status = .ok,
                     .content_type = try pathToContentType(reader.target),
-                    .content_length = chamber.len,
+                    .content_length = content.len,
                 };
-                return try http.Writer.init(self.server.alloc, response_header, chamber, true);
-            } else |_| {
-                std.log.err("{s} not found in resource dir, falling back to embedded", .{reader.target});
-            }
+                return try http.Writer.init(self.server.alloc, response_header, content, false);
+            },
         }
-
-        const content = try embeddedLookup(reader.target);
-        const response_header = http.Header{
-            .status = .ok,
-            .content_type = try pathToContentType(reader.target),
-            .content_length = content.len,
-        };
-        return try http.Writer.init(self.server.alloc, response_header, content, false);
     }
 
     fn poll(self: *Connection) EventLoop.HandlerAction {
@@ -529,6 +520,113 @@ fn getResourcePathAlloc(alloc: Allocator, root: []const u8, path: []const u8) ![
 
     return real_path;
 }
+
+const UrlPurpose = union(enum) {
+    simulation_state: usize,
+    save: usize,
+    reset: usize,
+    get_chamber: usize,
+    login_redirect: void,
+    login_code: []const u8,
+    upload: void,
+    userinfo: void,
+    get_resource: void,
+    num_simulations: void,
+
+    const IndexedTargetOption = enum {
+        @"/simulation_state",
+        @"/save",
+        @"/reset",
+        @"/chamber.wasm",
+    };
+
+    fn parseIndexed(target: []const u8) ?UrlPurpose {
+        if (target.len < 1 or target[0] != '/') {
+            return null;
+        }
+
+        var end = std.mem.indexOfScalar(u8, target[1..], '/') orelse {
+            return null;
+        };
+        end += 1;
+
+        // FIXME: max id check
+        const id = std.fmt.parseInt(usize, target[1..end], 10) catch {
+            return null;
+        };
+
+        const remaining = target[end..];
+        const option = std.meta.stringToEnum(IndexedTargetOption, remaining) orelse {
+            return null;
+        };
+
+        switch (option) {
+            .@"/simulation_state" => {
+                return UrlPurpose{ .simulation_state = id };
+            },
+            .@"/save" => {
+                return UrlPurpose{ .save = id };
+            },
+            .@"/reset" => {
+                return UrlPurpose{ .reset = id };
+            },
+            .@"/chamber.wasm" => {
+                return UrlPurpose{ .get_chamber = id };
+            },
+        }
+    }
+
+    fn extractCodeFromQueryParams(target: []const u8) ?[]const u8 {
+        var it = http.QueryParamsIt.init(target);
+        while (it.next()) |param| {
+            if (std.mem.eql(u8, param.key, "code")) {
+                return param.val;
+            }
+        }
+
+        return null;
+    }
+
+    const NonIndexedTargetOption = enum {
+        @"/login_redirect",
+        @"/upload",
+        @"/userinfo",
+        @"/num_simulations",
+    };
+
+    fn parse(target: []const u8) !UrlPurpose {
+        if (parseIndexed(target)) |parsed| {
+            return parsed;
+        }
+
+        if (std.meta.stringToEnum(NonIndexedTargetOption, target)) |option| {
+            switch (option) {
+                .@"/login_redirect" => {
+                    return UrlPurpose{ .login_redirect = {} };
+                },
+                .@"/upload" => {
+                    return UrlPurpose{ .upload = {} };
+                },
+                .@"/userinfo" => {
+                    return UrlPurpose{ .userinfo = {} };
+                },
+                .@"/num_simulations" => {
+                    return UrlPurpose{ .num_simulations = {} };
+                },
+            }
+        }
+
+        if (std.mem.startsWith(u8, target, "/login_code?")) {
+            const code = extractCodeFromQueryParams(target) orelse {
+                return error.NoCode;
+            };
+
+            return UrlPurpose{ .login_code = code };
+        }
+
+        return UrlPurpose{ .get_resource = {} };
+    }
+};
 
 const AuthRequestQueue = struct {
     const Request = struct {
