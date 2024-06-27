@@ -190,6 +190,14 @@ const Connection = struct {
         self.state = .http;
     }
 
+    fn getSimulation(self: *Connection, id: usize) !*Simulation {
+        if (id >= self.server.app.simulations.items.len) {
+            return error.OutOfBounds;
+        }
+
+        return &self.server.app.simulations.items[id];
+    }
+
     fn processRequest(self: *Connection, reader: http.Reader) !?http.Writer {
         const url_purpose = try UrlPurpose.parse(reader.target);
         switch (url_purpose) {
@@ -205,7 +213,7 @@ const Connection = struct {
                 return try http.Writer.init(self.server.alloc, response_header, num_sims_s, true);
             },
             .simulation_state => |id| {
-                const simulation = &self.server.app.simulations.items[id];
+                const simulation = try self.getSimulation(id);
                 const ResponseJson = struct {
                     balls: [Simulation.num_balls]Ball,
                     chamber_state: []const u8,
@@ -241,7 +249,7 @@ const Connection = struct {
                 return try http.Writer.init(self.server.alloc, response_header, response_body, true);
             },
             .save => |id| {
-                const simulation = &self.server.app.simulations.items[id];
+                const simulation = try self.getSimulation(id);
                 simulation.mutex.lock();
                 defer simulation.mutex.unlock();
 
@@ -254,7 +262,7 @@ const Connection = struct {
                 return try http.Writer.init(self.server.alloc, response_header, "", false);
             },
             .reset => |id| {
-                const simulation = &self.server.app.simulations.items[id];
+                const simulation = try self.getSimulation(id);
                 simulation.mutex.lock();
                 defer simulation.mutex.unlock();
                 simulation.reset();
@@ -266,6 +274,9 @@ const Connection = struct {
                 return try http.Writer.init(self.server.alloc, response_header, "", false);
             },
             .get_chamber => |id| {
+                if (id >= self.server.app.chamber_paths.items.len) {
+                    return error.OutOfBounds;
+                }
                 var f = try std.fs.cwd().openFile(self.server.app.chamber_paths.items[id], .{});
                 defer f.close();
 
