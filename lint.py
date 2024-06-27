@@ -40,8 +40,6 @@ def main():
                 "./zig-out/bin/ball-machine",
                 "--port",
                 "8000",
-                "--chamber",
-                "./zig-out/bin/platforms.wasm",
                 "--client-id",
                 "1234",
                 "--client-secret",

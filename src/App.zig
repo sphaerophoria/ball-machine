@@ -2,8 +2,9 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Simulation = @import("Simulation.zig");
 const wasm_chamber = @import("wasm_chamber.zig");
+const Db = @import("Db.zig");
 
-const ChamberPaths = std.ArrayListUnmanaged([]const u8);
+const ChamberIds = std.ArrayListUnmanaged(i64);
 const ChamberMods = std.ArrayListUnmanaged(wasm_chamber.WasmChamber);
 const Simulations = std.ArrayListUnmanaged(Simulation);
 
@@ -12,66 +13,51 @@ const App = @This();
 alloc: Allocator,
 mutex: std.Thread.Mutex = .{},
 wasm_loader: wasm_chamber.WasmLoader,
-chamber_paths: ChamberPaths,
+chamber_ids: ChamberIds,
 chamber_mods: ChamberMods,
 simulations: Simulations,
-db_path: []const u8,
 shutdown: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
 new_chamber_idx: usize = 0,
 
-pub fn init(alloc: Allocator, chamber_paths_in: []const []const u8, db_path: []const u8) !App {
-    var ret = try initEmpty(alloc, db_path, chamber_paths_in.len);
+pub fn init(alloc: Allocator, chambers: []const Db.Chamber) !App {
+    var ret = try initEmpty(alloc, chambers.len);
     errdefer ret.deinit();
 
-    for (chamber_paths_in) |p| {
-        const chamber_f = try std.fs.cwd().openFile(p, .{});
-        defer chamber_f.close();
-        const chamber_content = try chamber_f.readToEndAlloc(alloc, 1_000_000);
-        defer alloc.free(chamber_content);
-
-        try ret.appendChamber(chamber_content);
+    for (chambers) |db_chamber| {
+        try ret.appendChamber(db_chamber.id, db_chamber.data);
     }
 
     return ret;
 }
 
-pub fn initFromHistory(alloc: Allocator, chamber_path: []const u8, db_path: []const u8, history_path: []const u8, history_start_idx: usize) !App {
-    var ret = try initEmpty(alloc, db_path, 1);
-    // NOTE: do not need to worry about consistency of lists in ret because
-    // failure results in ret never returning
-    // This errdefer also does a lot of heavy lifting of freeing allocated
-    // resources of things that make it into the lists
+pub fn initFromHistory(alloc: Allocator, history_path: []const u8, history_start_idx: usize, chambers: []const Db.Chamber) !App {
+    var ret = try initEmpty(alloc, chambers.len);
     errdefer ret.deinit();
 
-    const chamber_f = try std.fs.cwd().openFile(chamber_path, .{});
-    defer chamber_f.close();
-    const chamber_content = try chamber_f.readToEndAlloc(alloc, 1_000_000);
-    defer alloc.free(chamber_content);
+    const f = try std.fs.cwd().openFile(history_path, .{});
+    var json_reader = std.json.reader(alloc, f.reader());
+    defer json_reader.deinit();
 
-    var chamber = try ret.wasm_loader.load(alloc, chamber_content);
-    ret.chamber_mods.append(alloc, chamber) catch |e| {
-        chamber.deinit();
-        return e;
-    };
+    const parsed = try std.json.parseFromTokenSource(Simulation.SimulationSave, alloc, &json_reader, .{});
+    defer parsed.deinit();
 
-    var simulation = try Simulation.initFromHistory(alloc, chamber, history_path, history_start_idx);
-    ret.simulations.append(alloc, simulation) catch |e| {
-        simulation.deinit();
-        return e;
-    };
+    if (history_start_idx >= parsed.value.steps.len) {
+        return error.InvalidStartIdx;
+    }
 
-    const duped_path = try alloc.dupe(u8, chamber_path);
-    ret.chamber_paths.append(alloc, duped_path) catch |e| {
-        alloc.free(duped_path);
-        return e;
-    };
+    for (chambers) |db_chamber| {
+        try ret.appendChamber(db_chamber.id, db_chamber.data);
+        const added_simulation = &ret.simulations.items[ret.simulations.items.len - 1];
+        added_simulation.num_steps_taken = parsed.value.steps[history_start_idx].num_steps_taken;
+        if (parsed.value.chamber_id == db_chamber.id) {
+            try added_simulation.loadSnapshot(parsed.value.steps[history_start_idx]);
+        }
+    }
 
     return ret;
 }
 
-fn initEmpty(alloc: Allocator, db_path: []const u8, capacity: usize) !App {
-    try std.fs.cwd().makePath(db_path);
-
+fn initEmpty(alloc: Allocator, capacity: usize) !App {
     var wasm_loader = try wasm_chamber.WasmLoader.init();
     errdefer wasm_loader.deinit();
 
@@ -81,21 +67,20 @@ fn initEmpty(alloc: Allocator, db_path: []const u8, capacity: usize) !App {
     var simulations = try Simulations.initCapacity(alloc, capacity);
     errdefer deinitSimulations(alloc, &simulations);
 
-    var chamber_paths = try ChamberPaths.initCapacity(alloc, capacity);
-    errdefer deinitChamberPaths(alloc, &chamber_paths);
+    var chamber_ids = try ChamberIds.initCapacity(alloc, capacity);
+    errdefer chamber_ids.deinit(alloc);
 
     return App{
         .alloc = alloc,
         .wasm_loader = wasm_loader,
-        .chamber_paths = chamber_paths,
+        .chamber_ids = chamber_ids,
         .chamber_mods = chamber_mods,
         .simulations = simulations,
-        .db_path = db_path,
     };
 }
 
 pub fn deinit(self: *App) void {
-    deinitChamberPaths(self.alloc, &self.chamber_paths);
+    self.chamber_ids.deinit(self.alloc);
     deinitChamberMods(self.alloc, &self.chamber_mods);
     deinitSimulations(self.alloc, &self.simulations);
     self.wasm_loader.deinit();
@@ -104,8 +89,7 @@ pub fn deinit(self: *App) void {
 pub fn run(self: *App) !void {
     const start = try std.time.Instant.now();
 
-    const initial_step = self.simulations.items[0].num_steps_taken;
-    std.debug.assert(self.simulations.items.len == 1 or initial_step == 0);
+    const initial_step = if (self.simulations.items.len > 0) self.simulations.items[0].num_steps_taken else 0;
 
     while (!self.shutdown.load(.unordered)) {
         std.time.sleep(1_666_666);
@@ -126,7 +110,7 @@ pub fn run(self: *App) !void {
     }
 }
 
-pub fn appendChamber(self: *App, data: []const u8) !void {
+pub fn appendChamber(self: *App, db_id: i64, data: []const u8) !void {
     self.mutex.lock();
     defer self.mutex.unlock();
 
@@ -150,13 +134,7 @@ pub fn appendChamber(self: *App, data: []const u8) !void {
         _ = self.simulations.pop();
     }
 
-    const fname = try std.fmt.allocPrint(self.alloc, "{s}/app_chamber_{d}.wasm", .{ self.db_path, self.new_chamber_idx });
-    self.new_chamber_idx += 1;
-    const f = try std.fs.cwd().createFile(fname, .{});
-    defer f.close();
-    try f.writeAll(data);
-
-    try self.chamber_paths.append(self.alloc, fname);
+    try self.chamber_ids.append(self.alloc, db_id);
 }
 
 fn deinitSimulations(alloc: Allocator, simulations: *Simulations) void {
@@ -171,13 +149,6 @@ fn deinitChamberMods(alloc: Allocator, chambers: *ChamberMods) void {
         chamber.deinit();
     }
     chambers.deinit(alloc);
-}
-
-fn deinitChamberPaths(alloc: Allocator, paths: *ChamberPaths) void {
-    for (paths.items) |p| {
-        alloc.free(p);
-    }
-    paths.deinit(alloc);
 }
 
 fn loadChamber(alloc: Allocator, wasm_loader: *wasm_chamber.WasmLoader, path: []const u8) !wasm_chamber.WasmChamber {

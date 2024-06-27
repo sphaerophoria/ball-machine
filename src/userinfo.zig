@@ -468,11 +468,11 @@ pub const Authentication = struct {
         return cookie;
     }
 
-    pub fn userForRequest(self: *Authentication, header_buf: []const u8) !?Db.UserInfo {
+    pub fn userForRequest(self: *Authentication, alloc: Allocator, header_buf: []const u8) !?Db.UserInfo {
         const session_id = sessionIdFromHeader(header_buf) catch {
             return null;
         };
 
-        return try self.db.userFromSessionId(self.alloc, &session_id);
+        return try self.db.userFromSessionId(alloc, &session_id);
     }
 };

@@ -24,6 +24,7 @@ auth_request_thread: *AuthRequestThread,
 auth_request_handle: std.Thread,
 event_loop: *EventLoop,
 auth: Authentication,
+db: *Db,
 
 pub fn init(
     alloc: Allocator,
@@ -58,6 +59,7 @@ pub fn init(
         .auth_request_thread = auth_request_thread,
         .auth_request_handle = auth_request_handle,
         .event_loop = event_loop,
+        .db = db,
     };
 }
 
@@ -253,7 +255,8 @@ const Connection = struct {
                 simulation.mutex.lock();
                 defer simulation.mutex.unlock();
 
-                try simulation.history.save("history.json");
+                const db_id = self.server.app.chamber_ids.items[id];
+                try simulation.history.save(db_id, "history.json");
                 const response_header = http.Header{
                     .status = .ok,
                     .content_type = .@"application/json",
@@ -274,21 +277,24 @@ const Connection = struct {
                 return try http.Writer.init(self.server.alloc, response_header, "", false);
             },
             .get_chamber => |id| {
-                if (id >= self.server.app.chamber_paths.items.len) {
+                if (id >= self.server.app.chamber_ids.items.len) {
                     return error.OutOfBounds;
                 }
-                var f = try std.fs.cwd().openFile(self.server.app.chamber_paths.items[id], .{});
-                defer f.close();
 
-                const chamber = try f.readToEndAlloc(self.server.alloc, 10_000_000);
-                errdefer self.server.alloc.free(chamber);
+                var chamber = try self.server.db.getChamber(self.server.alloc, self.server.app.chamber_ids.items[id]);
+                defer chamber.deinit(self.server.alloc);
+
+                // Writer object requires either owned or static memory, the
+                // chamber info does not provide this
+                const chamber_data = try self.server.alloc.dupe(u8, chamber.data);
+                errdefer self.server.alloc.free(chamber_data);
 
                 const response_header = http.Header{
                     .status = .ok,
                     .content_type = .@"application/wasm",
-                    .content_length = chamber.len,
+                    .content_length = chamber.data.len,
                 };
-                return try http.Writer.init(self.server.alloc, response_header, chamber, true);
+                return try http.Writer.init(self.server.alloc, response_header, chamber_data, true);
             },
             .login_redirect => {
                 // FIXME: If already logged in just redirect back to index
@@ -300,13 +306,29 @@ const Connection = struct {
                 return null;
             },
             .upload => {
+                var user = try self.server.auth.userForRequest(self.server.alloc, reader.header_buf) orelse {
+                    std.log.err("User is not logged in for upload", .{});
+                    return error.NotLoggedIn;
+                };
+                defer user.deinit(self.server.alloc);
+
                 var parts = try http.parseMultipartReq(self.server.alloc, reader.header_buf, reader.buf.items);
                 defer parts.deinit();
 
+                const chamber_name = parts.get("name") orelse {
+                    return error.NoChamberName;
+                };
                 const chamber = parts.get("chamber") orelse {
                     return error.NoChamber;
                 };
-                try self.server.app.appendChamber(chamber);
+
+                const chamber_id = try self.server.db.addChamber(user.id, chamber_name, chamber);
+                self.server.app.appendChamber(chamber_id, chamber) catch |e| {
+                    self.server.db.deleteChamber(chamber_id) catch |del_err| {
+                        std.log.err("Failed to delete chamber: {any}", .{del_err});
+                    };
+                    return e;
+                };
 
                 const response_header = http.Header{
                     .status = .see_other,
@@ -322,7 +344,7 @@ const Connection = struct {
                 return try http.Writer.init(self.server.alloc, response_header, "", false);
             },
             .userinfo => {
-                var user = try self.server.auth.userForRequest(reader.header_buf) orelse {
+                var user = try self.server.auth.userForRequest(self.server.alloc, reader.header_buf) orelse {
                     const response_header = http.Header{
                         .status = .not_found,
                         .content_type = .@"application/json",

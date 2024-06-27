@@ -42,39 +42,15 @@ pub fn init(alloc: Allocator, seed: usize, chamber_mod_const: wasm_chamber.WasmC
     };
 }
 
-pub fn initFromHistory(alloc: Allocator, chamber_mod_const: wasm_chamber.WasmChamber, history_path: []const u8, history_idx: usize) !Simulation {
-    var chamber_mod = chamber_mod_const;
+// History item data type
 
-    const f = try std.fs.cwd().openFile(history_path, .{});
-    var json_reader = std.json.reader(alloc, f.reader());
-    defer json_reader.deinit();
+pub fn loadSnapshot(self: *Simulation, snapshot: SimulationSnapshot) !void {
+    const chamber_state = try self.chamber_mod.load(snapshot.chamber_save);
 
-    const parsed = try std.json.parseFromTokenSource(std.json.Value, alloc, &json_reader, .{});
-    defer parsed.deinit();
-
-    if (parsed.value != .array) {
-        return error.InvalidRecording;
-    }
-
-    if (history_idx >= parsed.value.array.items.len) {
-        return error.InvalidStartIdx;
-    }
-
-    const val = parsed.value.array.items[history_idx];
-    const parsed_snapshot = try std.json.parseFromValue(SimulationSnapshot, alloc, val, .{});
-    defer parsed_snapshot.deinit();
-
-    return .{
-        .mutex = std.Thread.Mutex{},
-        .num_steps_taken = parsed_snapshot.value.num_steps_taken,
-        .prng = parsed_snapshot.value.prng,
-        .balls = parsed_snapshot.value.balls,
-        .history = SimulationHistory{
-            .alloc = alloc,
-        },
-        .chamber_mod = chamber_mod,
-        .chamber_state = try chamber_mod.load(parsed_snapshot.value.chamber_save),
-    };
+    self.balls = snapshot.balls;
+    self.num_steps_taken = snapshot.num_steps_taken;
+    self.prng = snapshot.prng;
+    self.chamber_state = chamber_state;
 }
 
 pub fn deinit(self: *Simulation) void {
@@ -166,11 +142,17 @@ fn makeBalls(rng: *std.Random.DefaultPrng) [num_balls]Ball {
     return ret;
 }
 
-const SimulationSnapshot = struct {
+pub const SimulationSnapshot = struct {
     balls: [num_balls]Ball,
     num_steps_taken: u64,
     chamber_save: []const u8,
     prng: std.Random.DefaultPrng,
+};
+
+// NOTE sync with .save
+pub const SimulationSave = struct {
+    chamber_id: i64,
+    steps: []SimulationSnapshot,
 };
 
 const SimulationHistory = struct {
@@ -228,7 +210,7 @@ const SimulationHistory = struct {
         };
     }
 
-    pub fn save(self: *SimulationHistory, path: []const u8) !void {
+    pub fn save(self: *SimulationHistory, chamber_db_id: i64, path: []const u8) !void {
         var output = try std.fs.cwd().createFile(path, .{});
         defer output.close();
 
@@ -238,6 +220,12 @@ const SimulationHistory = struct {
         var json_writer = std.json.writeStream(buf_writer.writer(), .{
             .whitespace = .indent_2,
         });
+
+        try json_writer.beginObject();
+        try json_writer.objectField("chamber_id");
+        try json_writer.write(chamber_db_id);
+
+        try json_writer.objectField("steps");
         try json_writer.beginArray();
 
         var it = self.iter();
@@ -245,5 +233,6 @@ const SimulationHistory = struct {
             try json_writer.write(val);
         }
         try json_writer.endArray();
+        try json_writer.endObject();
     }
 };

@@ -10,7 +10,6 @@ const Db = @import("Db.zig");
 
 const Args = struct {
     alloc: Allocator,
-    chambers: []const []const u8,
     www_root: ?[]const u8,
     port: u16,
     history_file: ?[]const u8,
@@ -21,7 +20,6 @@ const Args = struct {
     it: std.process.ArgIterator,
 
     const Option = enum {
-        @"--chamber",
         @"--www-root",
         @"--port",
         @"--load",
@@ -42,8 +40,6 @@ const Args = struct {
         var client_id: ?[]const u8 = null;
         var client_secret: ?[]const u8 = null;
         var db: ?[]const u8 = null;
-        var chambers = std.ArrayList([]const u8).init(alloc);
-        errdefer chambers.deinit();
 
         while (it.next()) |arg| {
             const option = std.meta.stringToEnum(Option, arg) orelse {
@@ -51,13 +47,6 @@ const Args = struct {
                 help(process_name);
             };
             switch (option) {
-                .@"--chamber" => {
-                    const chamber = it.next() orelse {
-                        print("--chamber provided with no argument\n", .{});
-                        help(process_name);
-                    };
-                    try chambers.append(chamber);
-                },
                 .@"--www-root" => {
                     www_root = it.next();
                 },
@@ -111,19 +100,8 @@ const Args = struct {
             }
         }
 
-        if (chambers.items.len == 0) {
-            print("--chamber not provied\n", .{});
-            help(process_name);
-        }
-
-        if (chambers.items.len > 1 and history_file != null) {
-            print("--load can only be used with a single chamber", .{});
-            help(process_name);
-        }
-
         return .{
             .alloc = alloc,
-            .chambers = try chambers.toOwnedSlice(),
             .www_root = www_root,
             .port = port orelse {
                 print("--port not provied\n", .{});
@@ -148,7 +126,6 @@ const Args = struct {
     }
 
     pub fn deinit(self: *Args) void {
-        self.alloc.free(self.chambers);
         self.it.deinit();
     }
 
@@ -164,9 +141,6 @@ const Args = struct {
             print("{s}: ", .{option.name});
             const option_val: Option = @enumFromInt(option.value);
             switch (option_val) {
-                .@"--chamber" => {
-                    print("Which chamber to run, can be provided multiple times for multiple chambers", .{});
-                },
                 .@"--www-root" => {
                     print("Optional, where to serve html from", .{});
                 },
@@ -231,14 +205,11 @@ const SignalHandler = struct {
     }
 };
 
-fn initAppFromArgs(alloc: Allocator, args: Args) !App {
+fn initAppFromArgs(alloc: Allocator, args: Args, chambers: []const Db.Chamber) !App {
     if (args.history_file) |history_file| {
-        if (args.chambers.len != 1) {
-            return error.TooManyChambers;
-        }
-        return App.initFromHistory(alloc, args.chambers[0], args.db, history_file, args.history_start_idx);
+        return App.initFromHistory(alloc, history_file, args.history_start_idx, chambers);
     } else {
-        return App.init(alloc, args.chambers, args.db);
+        return App.init(alloc, chambers);
     }
 }
 
@@ -263,7 +234,10 @@ pub fn main() !void {
     var db = try Db.init(args.db);
     defer db.deinit();
 
-    var app = try initAppFromArgs(alloc, args);
+    var db_chambers = try db.getChambers(alloc);
+    defer db_chambers.deinit(alloc);
+
+    var app = try initAppFromArgs(alloc, args, db_chambers.items);
     defer app.deinit();
 
     const thread = try std.Thread.spawn(.{}, App.run, .{&app});
