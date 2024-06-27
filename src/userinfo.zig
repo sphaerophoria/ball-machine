@@ -3,6 +3,7 @@ const Allocator = std.mem.Allocator;
 const ArenaAllocator = std.heap.ArenaAllocator;
 const http = @import("http.zig");
 const c = @import("c.zig");
+const Db = @import("Db.zig");
 
 const AuthResponse = struct {
     id_token: []const u8,
@@ -150,11 +151,17 @@ const JsonWebToken = struct {
     };
 
     const Message = struct {
+        // client id
         aud: []const u8,
+        // expiry time
         exp: i64,
+        // issue time
         iat: i64,
+        // issuer url
         iss: []const u8,
+        // user id
         sub: []const u8,
+        // client id
         azp: []const u8,
         nonce: []const u8,
         preferred_username: []const u8,
@@ -296,40 +303,16 @@ const JsonWebToken = struct {
 };
 
 pub const Authentication = struct {
-    const UserInfo = struct {
-        user_id: []const u8,
-        username: []const u8,
-
-        pub fn deinit(self: *UserInfo, alloc: Allocator) void {
-            alloc.free(self.user_id);
-            alloc.free(self.username);
-        }
-
-        pub fn clone(self: *const UserInfo, alloc: Allocator) !UserInfo {
-            const user_id = try alloc.dupe(u8, self.user_id);
-            errdefer alloc.free(user_id);
-
-            const username = try alloc.dupe(u8, self.username);
-            errdefer alloc.free(username);
-
-            return .{
-                .user_id = user_id,
-                .username = username,
-            };
-        }
-    };
-
     const session_id_len = 32;
     const SessionId = [session_id_len]u8;
     const SessionCookie = [std.base64.url_safe.Encoder.calcSize(session_id_len)]u8;
-    const SessionMap = std.AutoHashMapUnmanaged(SessionId, UserInfo);
 
     alloc: Allocator,
     jwt_keys: []const RsaParams,
     rng: std.rand.DefaultCsprng,
-    sessions: SessionMap = .{},
+    db: *Db,
 
-    pub fn init(alloc: Allocator, jwt_keys: []const RsaParams) !Authentication {
+    pub fn init(alloc: Allocator, jwt_keys: []const RsaParams, db: *Db) !Authentication {
         var seed: [std.rand.DefaultCsprng.secret_seed_length]u8 = undefined;
         try std.posix.getrandom(&seed);
         const rng = std.rand.DefaultCsprng.init(seed);
@@ -338,15 +321,8 @@ pub const Authentication = struct {
             .alloc = alloc,
             .jwt_keys = jwt_keys,
             .rng = rng,
+            .db = db,
         };
-    }
-
-    pub fn deinit(self: *Authentication) void {
-        var it = self.sessions.iterator();
-        while (it.next()) |item| {
-            item.value_ptr.deinit(self.alloc);
-        }
-        self.sessions.deinit(self.alloc);
     }
 
     const nonce_size = std.base64.url_safe.Encoder.calcSize(
@@ -471,37 +447,32 @@ pub const Authentication = struct {
             return error.InvalidResponse;
         }
 
-        const username = try self.alloc.dupe(u8, jwt.message.preferred_username);
-        errdefer self.alloc.free(username);
-
-        const user_id = try self.alloc.dupe(u8, jwt.message.sub);
-        errdefer self.alloc.free(user_id);
-
-        // No errdefer as contents are freed by previous errdefers
-        const user_info = UserInfo{
-            .user_id = user_id,
-            .username = username,
-        };
+        const id = try self.db.addUser(
+            jwt.message.sub,
+            jwt.message.preferred_username,
+            jwt.message.iat,
+            jwt.message.exp,
+        );
 
         var session_id: SessionId = undefined;
         self.rng.random().bytes(&session_id);
 
-        try self.sessions.put(self.alloc, session_id, user_info);
+        // FIXME: if session id is already set, remove the old session id from
+        // the db
+        //
+        // FIXME: cap the number of session ids for a user
+        try self.db.addSessionId(id, &session_id);
 
         var cookie: SessionCookie = undefined;
         _ = std.base64.url_safe.Encoder.encode(&cookie, &session_id);
         return cookie;
     }
 
-    pub fn userForRequest(self: *Authentication, header_buf: []const u8) !?UserInfo {
+    pub fn userForRequest(self: *Authentication, header_buf: []const u8) !?Db.UserInfo {
         const session_id = sessionIdFromHeader(header_buf) catch {
             return null;
         };
 
-        const user_info = self.sessions.get(session_id) orelse {
-            return null;
-        };
-
-        return try user_info.clone(self.alloc);
+        return try self.db.userFromSessionId(self.alloc, &session_id);
     }
 };

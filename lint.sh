@@ -7,5 +7,6 @@ zig fmt build.zig --check
 zig fmt src --check
 prettier -c src/
 jshint src/
+zig build test
 
 echo "Success"

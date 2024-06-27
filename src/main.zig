@@ -6,6 +6,7 @@ const TcpServer = @import("TcpServer.zig");
 const Server = @import("Server.zig");
 const EventLoop = @import("EventLoop.zig");
 const App = @import("App.zig");
+const Db = @import("Db.zig");
 
 const Args = struct {
     alloc: Allocator,
@@ -255,6 +256,9 @@ pub fn main() !void {
 
     const addr = std.net.Address.initIp4(.{ 127, 0, 0, 1 }, args.port);
 
+    var db = try Db.init(args.db);
+    defer db.deinit();
+
     var app = try initAppFromArgs(alloc, args);
     defer app.deinit();
 
@@ -284,6 +288,7 @@ pub fn main() !void {
         std.mem.trim(u8, args.client_secret, &std.ascii.whitespace),
         jwt_keys.items,
         &event_loop,
+        &db,
     );
     defer sim_server.deinit();
 
@@ -292,4 +297,8 @@ pub fn main() !void {
     try event_loop.register(tcp_server.server.stream.handle, tcp_server.handler());
 
     try event_loop.run();
+}
+
+test {
+    std.testing.refAllDeclsRecursive(@This());
 }

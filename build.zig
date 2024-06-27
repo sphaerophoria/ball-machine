@@ -48,7 +48,28 @@ pub fn buildChamber(b: *std.Build, name: []const u8, opt: std.builtin.OptimizeMo
     b.installArtifact(chamber);
 }
 
+fn addMainDependencies(b: *std.Build, exe: *std.Build.Step.Compile, wasmtime_lib: std.Build.LazyPath, output: std.Build.LazyPath, opt: std.builtin.OptimizeMode) void {
+    exe.root_module.addAnonymousImport("resources", .{ .root_source_file = output });
+    exe.addLibraryPath(wasmtime_lib.dirname());
+    const link_mode: std.builtin.LinkMode = switch (opt) {
+        // dynamic is faster, but harder to ship
+        .Debug => .dynamic,
+        else => .static,
+    };
+    exe.root_module.linkSystemLibrary("wasmtime", .{
+        .preferred_link_mode = link_mode,
+    });
+    exe.addIncludePath(b.path("deps/wasmtime/crates/c-api/include"));
+    exe.linkLibC();
+    exe.linkLibCpp();
+    exe.linkSystemLibrary("ssl");
+    exe.linkSystemLibrary("crypto");
+    exe.linkSystemLibrary("curl");
+    exe.linkSystemLibrary("sqlite3");
+}
 pub fn build(b: *std.Build) !void {
+    const test_step = b.step("test", "Run unit tests");
+
     const target = b.standardTargetOptions(.{});
     const opt = b.standardOptimizeOption(.{});
 
@@ -74,21 +95,16 @@ pub fn build(b: *std.Build) !void {
         .target = target,
         .optimize = opt,
     });
-    exe.root_module.addAnonymousImport("resources", .{ .root_source_file = output });
-    exe.addLibraryPath(wasmtime_lib.dirname());
-    const link_mode: std.builtin.LinkMode = switch (opt) {
-        // dynamic is faster, but harder to ship
-        .Debug => .dynamic,
-        else => .static,
-    };
-    exe.root_module.linkSystemLibrary("wasmtime", .{
-        .preferred_link_mode = link_mode,
-    });
-    exe.addIncludePath(b.path("deps/wasmtime/crates/c-api/include"));
-    exe.linkLibC();
-    exe.linkLibCpp();
-    exe.linkSystemLibrary("ssl");
-    exe.linkSystemLibrary("crypto");
-    exe.linkSystemLibrary("curl");
+    addMainDependencies(b, exe, wasmtime_lib, output, opt);
     b.installArtifact(exe);
+
+    const unit_tests = b.addTest(.{
+        .root_source_file = b.path("src/main.zig"),
+        .target = target,
+        .test_runner = b.path("test/test_runner.zig"),
+    });
+    addMainDependencies(b, unit_tests, wasmtime_lib, output, opt);
+
+    const run_unit_tests = b.addRunArtifact(unit_tests);
+    test_step.dependOn(&run_unit_tests.step);
 }

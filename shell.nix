@@ -25,6 +25,8 @@ pkgs.mkShell {
     binaryen
     openssl
     curl
+    sqlite
+    sqlitebrowser
   ];
 }
 

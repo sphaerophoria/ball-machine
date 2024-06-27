@@ -12,6 +12,7 @@ const future = @import("future.zig");
 const Ball = physics.Ball;
 const ConnectionSpawner = @import("TcpServer.zig").ConnectionSpawner;
 const App = @import("App.zig");
+const Db = @import("Db.zig");
 
 const Server = @This();
 
@@ -32,6 +33,7 @@ pub fn init(
     client_secret: []const u8,
     jwt_keys: []const userinfo.RsaParams,
     event_loop: *EventLoop,
+    db: *Db,
 ) !Server {
     const trimmed_id = std.mem.trim(u8, client_id, &std.ascii.whitespace);
     const trimmed_secret = std.mem.trim(u8, client_secret, &std.ascii.whitespace);
@@ -45,7 +47,7 @@ pub fn init(
         .{auth_request_thread},
     );
 
-    const auth = try Authentication.init(alloc, jwt_keys);
+    const auth = try Authentication.init(alloc, jwt_keys, db);
 
     return Server{
         .alloc = alloc,
@@ -60,7 +62,6 @@ pub fn init(
 }
 
 pub fn deinit(self: *Server) void {
-    self.auth.deinit();
     self.auth_request_thread.shutdown.store(true, .monotonic);
     self.auth_request_handle.join();
     self.auth_request_thread.deinit();
@@ -279,6 +280,7 @@ const Connection = struct {
                 return try http.Writer.init(self.server.alloc, response_header, chamber, true);
             },
             .login_redirect => {
+                // FIXME: If already logged in just redirect back to index
                 return try self.server.auth.makeTwitchRedirect(self.server.client_id);
             },
             .login_code => |code| {
