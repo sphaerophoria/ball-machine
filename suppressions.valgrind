@@ -1,0 +1,10 @@
+{
+   wasmtime
+   Memcheck:Cond
+   fun:_ZN10wasmparser6parser6Parser5parse17haaad12eff9b1a176E
+}
+{
+   wasmtime_again
+   Memcheck:Cond
+   fun:_ZN10wasmparser6parser6Parser12parse_reader17h642f5f3621289c77E
+}

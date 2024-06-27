@@ -27,6 +27,8 @@ pkgs.mkShell {
     curl
     sqlite
     sqlitebrowser
+    pyright
+    black
   ];
 }
 

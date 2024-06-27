@@ -243,13 +243,17 @@ fn initAppFromArgs(alloc: Allocator, args: Args) !App {
 }
 
 pub fn main() !void {
-    var signal_handler = try SignalHandler.init();
-    defer signal_handler.deinit();
-
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
+    defer {
+        if (gpa.deinit() != .ok) {
+            std.process.exit(1);
+        }
+    }
 
     const alloc = gpa.allocator();
+
+    var signal_handler = try SignalHandler.init();
+    defer signal_handler.deinit();
 
     var args = try Args.parse(alloc);
     defer args.deinit();

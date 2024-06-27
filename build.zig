@@ -98,6 +98,16 @@ pub fn build(b: *std.Build) !void {
     addMainDependencies(b, exe, wasmtime_lib, output, opt);
     b.installArtifact(exe);
 
+    const generate_test_db = b.addExecutable(.{
+        .name = "generate_test_db",
+        .root_source_file = b.path("test/generate_test_db.zig"),
+        .target = target,
+        .optimize = opt,
+    });
+    addMainDependencies(b, generate_test_db, wasmtime_lib, output, opt);
+    generate_test_db.root_module.addAnonymousImport("Db", .{ .root_source_file = b.path("src/Db.zig") });
+    b.installArtifact(generate_test_db);
+
     const unit_tests = b.addTest(.{
         .root_source_file = b.path("src/main.zig"),
         .target = target,
