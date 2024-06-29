@@ -1,6 +1,10 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
+const c = @cImport({
+    @cInclude("physics.h");
+});
+
 pub const Ball = struct {
     pos: Pos2,
     r: f32,
@@ -23,7 +27,7 @@ pub fn assertBallLayout() void {
     std.debug.assert(@intFromPtr(&ball.velocity.y) - @intFromPtr(&ball.velocity) == 4);
 }
 
-pub const Pos2 = struct {
+pub const Pos2 = extern struct {
     x: f32,
     y: f32,
 
@@ -42,7 +46,7 @@ pub const Pos2 = struct {
     }
 };
 
-pub const Vec2 = struct {
+pub const Vec2 = extern struct {
     x: f32,
     y: f32,
 
@@ -84,7 +88,7 @@ pub const Vec2 = struct {
     }
 };
 
-pub const Surface = struct {
+pub const Surface = extern struct {
     // Assumed normal points up if a is left of b, down if b is left of a
     a: Pos2,
     b: Pos2,
