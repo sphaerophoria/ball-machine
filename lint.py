@@ -21,6 +21,9 @@ def main():
     subprocess.run(["zig", "fmt", "src", "--check"], check=True)
     subprocess.run(["prettier", "-c", "src/"], check=True)
     subprocess.run(["jshint", "src/"], check=True)
+    subprocess.run(
+        ["clang-format", "-n", "-Werror", "src/chambers/plinko.c"], check=True
+    )
     subprocess.run(["black", "--check", "src", "test", "lint.py"], check=True)
     subprocess.run(["zig", "build", "--summary", "all"], check=True)
     subprocess.run(["zig", "build", "test"], check=True)

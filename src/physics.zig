@@ -23,7 +23,7 @@ pub fn assertBallLayout() void {
     std.debug.assert(@intFromPtr(&ball.velocity.y) - @intFromPtr(&ball.velocity) == 4);
 }
 
-pub const Pos2 = struct {
+pub const Pos2 = extern struct {
     x: f32,
     y: f32,
 
@@ -42,7 +42,7 @@ pub const Pos2 = struct {
     }
 };
 
-pub const Vec2 = struct {
+pub const Vec2 = extern struct {
     x: f32,
     y: f32,
 
@@ -84,7 +84,7 @@ pub const Vec2 = struct {
     }
 };
 
-pub const Surface = struct {
+pub const Surface = extern struct {
     // Assumed normal points up if a is left of b, down if b is left of a
     a: Pos2,
     b: Pos2,
@@ -224,28 +224,25 @@ fn pointWithinLineBounds(p: Pos2, a: Pos2, b: Pos2) bool {
     return within_x_bounds or within_y_bounds;
 }
 
-const ball_elasticity_multiplier = 0.90;
-
-pub fn applyCollision(ball: *Ball, resolution: Vec2, obj_normal: Vec2, delta: f32) void {
+pub fn applyCollision(ball: *Ball, resolution: Vec2, obj_normal: Vec2, delta: f32, elasticity: f32) void {
     const vel_ground_proj_mag = ball.velocity.dot(obj_normal);
-    const vel_adjustment = obj_normal.mul(-vel_ground_proj_mag * 2);
+    var vel_adjustment = obj_normal.mul(-vel_ground_proj_mag);
+    vel_adjustment = vel_adjustment.add(vel_adjustment.mul(elasticity));
 
     ball.velocity = ball.velocity.add(vel_adjustment);
-    const lost_velocity = (1.0 - ball_elasticity_multiplier) * (@abs(obj_normal.dot(ball.velocity.normalized())));
-    ball.velocity = ball.velocity.mul(1.0 - lost_velocity);
-
     ball.pos = ball.pos.add(resolution);
     ball.pos = ball.pos.add(ball.velocity.mul(delta));
 }
 
 pub fn applyBallCollision(a: *Ball, b: *Ball) void {
+    const ball_ball_elasticity = 0.9;
     const n = b.pos.sub(a.pos).normalized();
     const vel_diff = a.velocity.sub(b.velocity);
     const change_in_velocity = n.mul(vel_diff.dot(n));
 
-    a.velocity = a.velocity.sub(change_in_velocity).mul(ball_elasticity_multiplier);
+    a.velocity = a.velocity.sub(change_in_velocity).mul(ball_ball_elasticity);
     // NOTE: This only works because a and b have the same mass
-    b.velocity = b.velocity.add(change_in_velocity).mul(ball_elasticity_multiplier);
+    b.velocity = b.velocity.add(change_in_velocity).mul(ball_ball_elasticity);
 
     const balls_distance = a.pos.sub(b.pos).length();
     const overlap = a.r + b.r - balls_distance;

@@ -63,6 +63,32 @@ pub fn buildClientSideSim(b: *std.Build, opt: std.builtin.OptimizeMode) !std.Bui
     return sim.getEmittedBin();
 }
 
+fn buildCChamber(b: *std.Build, chambers_step: *std.Build.Step, libphysics: *std.Build.Step.Compile, opt: std.builtin.OptimizeMode) !void {
+    //zig cc -target wasm32-freestanding -Oz -I../libphysics -o plinko.wasm plinko.c walloc.c -Wl,--no-entry -Wl,--export=alloc -Wl,--export=init -Wl,--export=deinit -Wl,--export=free -Wl,--export=save -Wl,--export=load -Wl,--export=step -Wl,--export=render -Wl,--export=saveSize -lphysics -L ../../zig-out/lib/
+
+    const chamber = b.addExecutable(.{
+        .name = "plinko",
+        .root_source_file = null,
+        .target = b.resolveTargetQuery(std.zig.CrossTarget.parse(
+            .{ .arch_os_abi = "wasm32-freestanding" },
+        ) catch unreachable),
+        .optimize = opt,
+    });
+
+    const files = [_][]const u8{"plinko.c"};
+    chamber.addCSourceFiles(.{
+        .root = b.path("src/chambers"),
+        .files = &files,
+    });
+    chamber.addIncludePath(b.path("src/libphysics"));
+    chamber.linkLibrary(libphysics);
+    chamber.entry = .disabled;
+    chamber.root_module.export_symbol_names = &.{ "init", "deinit", "saveMemory", "ballsMemory", "canvasMemory", "save", "load", "step", "render", "saveSize" };
+    chamber.import_symbols = true;
+    b.installArtifact(chamber);
+    chambers_step.dependOn(&b.addInstallArtifact(chamber, .{}).step);
+}
+
 fn addMainDependencies(b: *std.Build, exe: *std.Build.Step.Compile, wasmtime_lib: std.Build.LazyPath, output: std.Build.LazyPath, opt: std.builtin.OptimizeMode) void {
     exe.root_module.addAnonymousImport("resources", .{ .root_source_file = output });
     exe.addLibraryPath(wasmtime_lib.dirname());
@@ -82,12 +108,25 @@ fn addMainDependencies(b: *std.Build, exe: *std.Build.Step.Compile, wasmtime_lib
     exe.linkSystemLibrary("curl");
     exe.linkSystemLibrary("sqlite3");
 }
+
 pub fn build(b: *std.Build) !void {
     const test_step = b.step("test", "Run unit tests");
     const chambers = b.step("chambers", "Chambers only");
 
     const target = b.standardTargetOptions(.{});
     const opt = b.standardOptimizeOption(.{});
+
+    const libphysics = b.addStaticLibrary(.{
+        .name = "physics",
+        .root_source_file = b.path("src/libphysics/physics_c_bindings.zig"),
+        .target = b.resolveTargetQuery(std.zig.CrossTarget.parse(
+            .{ .arch_os_abi = "wasm32-freestanding" },
+        ) catch unreachable),
+        .optimize = opt,
+    });
+    libphysics.root_module.addAnonymousImport("physics", .{ .root_source_file = b.path("src/physics.zig") });
+    libphysics.addIncludePath(b.path("src/libphysics"));
+    b.installArtifact(libphysics);
 
     const generate_embedded_resources = b.addExecutable(.{
         .name = "generate_embedded_resources",
@@ -97,6 +136,7 @@ pub fn build(b: *std.Build) !void {
 
     try buildChamber(b, chambers, "simple", opt);
     try buildChamber(b, chambers, "platforms", opt);
+    try buildCChamber(b, chambers, libphysics, opt);
     const client_side_sim = try buildClientSideSim(b, opt);
 
     const generate_embedded_resources_step = b.addRunArtifact(generate_embedded_resources);
