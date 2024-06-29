@@ -20,7 +20,6 @@ mutex: std.Thread.Mutex,
 balls: [num_balls]Ball,
 prng: std.rand.DefaultPrng,
 chamber_mod: wasm_chamber.WasmChamber,
-chamber_state: i32,
 history: SimulationHistory,
 num_steps_taken: u64,
 
@@ -28,7 +27,7 @@ pub fn init(alloc: Allocator, seed: usize, chamber_mod_const: wasm_chamber.WasmC
     var chamber_mod = chamber_mod_const;
     var prng = std.Random.DefaultPrng.init(seed);
     const balls = makeBalls(&prng);
-    const chamber_state = try chamber_mod.initChamber();
+    try chamber_mod.initChamber(num_balls);
     return .{
         .mutex = std.Thread.Mutex{},
         .num_steps_taken = 0,
@@ -38,19 +37,17 @@ pub fn init(alloc: Allocator, seed: usize, chamber_mod_const: wasm_chamber.WasmC
             .alloc = alloc,
         },
         .chamber_mod = chamber_mod,
-        .chamber_state = chamber_state,
     };
 }
 
 // History item data type
 
 pub fn loadSnapshot(self: *Simulation, snapshot: SimulationSnapshot) !void {
-    const chamber_state = try self.chamber_mod.load(snapshot.chamber_save);
+    try self.chamber_mod.load(snapshot.chamber_save);
 
     self.balls = snapshot.balls;
     self.num_steps_taken = snapshot.num_steps_taken;
     self.prng = snapshot.prng;
-    self.chamber_state = chamber_state;
 }
 
 pub fn deinit(self: *Simulation) void {
@@ -71,7 +68,7 @@ pub fn step(self: *Simulation) void {
         applyWrap(ball);
     }
 
-    self.chamber_mod.step(self.chamber_state, &self.balls, step_len_s) catch {
+    self.chamber_mod.step(&self.balls, step_len_s) catch {
         std.log.err("chamber step failed", .{});
     };
 
@@ -184,7 +181,7 @@ const SimulationHistory = struct {
         self.history[self.tail] = .{
             .balls = simulation.balls,
             .num_steps_taken = simulation.num_steps_taken,
-            .chamber_save = try simulation.chamber_mod.save(self.alloc, simulation.chamber_state),
+            .chamber_save = try simulation.chamber_mod.save(self.alloc),
             .prng = simulation.prng,
         };
         self.tail += 1;

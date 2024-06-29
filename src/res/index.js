@@ -21,17 +21,14 @@ function getChamberPixels(chamber, chamber_pixel_data, chamber_pixel_len) {
 
 function loadChamber(chamber, simulation_state) {
   const len = simulation_state.chamber_state.length;
-  const chamber_save = chamber.instance.exports.alloc(len, 1);
+  const chamber_save = chamber.instance.exports.saveMemory();
   const arr = new Uint8Array(
     chamber.instance.exports.memory.buffer,
     chamber_save,
     len,
   );
   arr.set(simulation_state.chamber_state);
-
-  const chamber_state = chamber.instance.exports.load(chamber_save);
-  chamber.instance.exports.free(chamber_save);
-  return chamber_state;
+  chamber.instance.exports.load();
 }
 
 class Chamber {
@@ -48,6 +45,8 @@ class Chamber {
 
     this.canvas.width = 600;
     this.canvas.height = 450;
+
+    chamber.instance.exports.init(0, this.canvas.width * this.canvas.height);
 
     const button_div = document.createElement("div");
     top_div.append(button_div);
@@ -67,10 +66,7 @@ class Chamber {
     document.body.appendChild(top_div);
 
     this.chamber_pixel_len = this.canvas.width * this.canvas.height * 4;
-    this.chamber_pixel_data = chamber.instance.exports.alloc(
-      this.chamber_pixel_len,
-      4,
-    );
+    this.chamber_pixel_data = chamber.instance.exports.canvasMemory();
     this.render();
   }
 
@@ -81,7 +77,7 @@ class Chamber {
     const simulation_response = await fetch(this.prefix + "/simulation_state");
     const simulation_state = await simulation_response.json();
 
-    const chamber_state = loadChamber(this.chamber, simulation_state);
+    loadChamber(this.chamber, simulation_state);
     ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
 
     const arr = getChamberPixels(
@@ -91,17 +87,11 @@ class Chamber {
     );
     arr.fill(0xff);
 
-    this.chamber.instance.exports.render(
-      chamber_state,
-      this.chamber_pixel_data,
-      this.canvas.width,
-      this.canvas.height,
-    );
-
-    this.chamber.instance.exports.deinit(chamber_state);
+    this.chamber.instance.exports.render(this.canvas.width, this.canvas.height);
 
     const img_data = new ImageData(arr, this.canvas.width, this.canvas.height);
     ctx.putImageData(img_data, 0, 0);
+    this.chamber.instance.exports.deinit();
 
     ctx.beginPath();
     ctx.strokeStyle = "black";

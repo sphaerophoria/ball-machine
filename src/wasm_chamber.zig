@@ -40,8 +40,10 @@ pub const WasmLoader = struct {
         var instance = try makeInstance(context, module, memory);
         memory.* = try loadWasmMemory(context, &instance);
         const init_fn = try loadWasmFn("init", context, &instance);
-        const alloc_fn = try loadWasmFn("alloc", context, &instance);
-        const free_fn = try loadWasmFn("free", context, &instance);
+        const save_memory_fn = try loadWasmFn("saveMemory", context, &instance);
+        const balls_memory_fn = try loadWasmFn("ballsMemory", context, &instance);
+        const canvas_memory_fn = try loadWasmFn("canvasMemory", context, &instance);
+        _ = canvas_memory_fn;
         const step_fn = try loadWasmFn("step", context, &instance);
         const save_fn = try loadWasmFn("save", context, &instance);
         const save_size_fn = try loadWasmFn("saveSize", context, &instance);
@@ -55,8 +57,8 @@ pub const WasmLoader = struct {
             .instance = instance,
             .memory = memory,
             .init_fn = init_fn,
-            .alloc_fn = alloc_fn,
-            .free_fn = free_fn,
+            .save_memory_fn = save_memory_fn,
+            .balls_memory_fn = balls_memory_fn,
             .step_fn = step_fn,
             .save_fn = save_fn,
             .save_size_fn = save_size_fn,
@@ -72,11 +74,11 @@ pub const WasmChamber = struct {
     instance: c.wasmtime_instance_t,
     memory: *c.wasmtime_memory_t,
     init_fn: c.wasmtime_func_t,
-    alloc_fn: c.wasmtime_func_t,
-    free_fn: c.wasmtime_func_t,
     step_fn: c.wasmtime_func_t,
     save_fn: c.wasmtime_func_t,
+    save_memory_fn: c.wasmtime_func_t,
     save_size_fn: c.wasmtime_func_t,
+    balls_memory_fn: c.wasmtime_func_t,
     load_fn: c.wasmtime_func_t,
     deinit_fn: c.wasmtime_func_t,
 
@@ -85,48 +87,41 @@ pub const WasmChamber = struct {
         c.wasmtime_store_delete(self.store);
     }
 
-    pub fn initChamber(self: *WasmChamber) !i32 {
-        var result: c.wasmtime_val_t = undefined;
+    pub fn initChamber(self: *WasmChamber, max_balls: usize) !void {
         var trap: ?*c.wasm_trap_t = null;
 
+        var inputs: [2]c.wasmtime_val_t = undefined;
+        inputs[0].kind = c.WASMTIME_I32;
+        inputs[0].of.i32 = @intCast(max_balls);
+
+        inputs[1].kind = c.WASMTIME_I32;
+        inputs[1].of.i32 = 0;
+
         const err =
-            c.wasmtime_func_call(self.context, &self.init_fn, null, 0, &result, 1, &trap);
+            c.wasmtime_func_call(self.context, &self.init_fn, &inputs, 2, null, 0, &trap);
 
         if (err != null or trap != null) {
             return error.InternalError;
         }
-
-        return result.of.i32;
     }
 
-    pub fn load(self: *WasmChamber, data: []const u8) !i32 {
-        var result: c.wasmtime_val_t = undefined;
+    pub fn load(self: *WasmChamber, data: []const u8) !void {
         var trap: ?*c.wasm_trap_t = null;
 
-        const wasm_ptr = try self.allocWasm(data.len, 1);
+        const wasm_ptr = try self.saveMemory();
         const wasm_offs = std.math.cast(usize, wasm_ptr) orelse {
             return error.InvalidOffset;
-        };
-
-        defer self.freeWasm(wasm_ptr) catch {
-            std.log.err("Failed to free wasm memory", .{});
         };
 
         const wasm_data = try getWasmSlice(self.context, self.memory, wasm_offs, data.len);
         @memcpy(wasm_data, data);
 
-        var input: c.wasmtime_val_t = undefined;
-        input.kind = c.WASMTIME_I32;
-        input.of.i32 = wasm_ptr;
-
         const err =
-            c.wasmtime_func_call(self.context, &self.load_fn, &input, 1, &result, 1, &trap);
+            c.wasmtime_func_call(self.context, &self.load_fn, null, 0, null, 0, &trap);
 
         if (err != null or trap != null) {
             return error.InternalError;
         }
-
-        return result.of.i32;
     }
 
     pub fn deinitChamber(self: *WasmChamber, state: i32) !void {
@@ -137,51 +132,6 @@ pub const WasmChamber = struct {
         input.of.i32 = state;
         const err =
             c.wasmtime_func_call(self.context, &self.deinit_fn, &input, 1, null, 0, &trap);
-
-        if (err != null or trap != null) {
-            return error.InternalError;
-        }
-    }
-
-    pub fn allocWasm(self: *WasmChamber, size: usize, alignment: usize) !i32 {
-        var trap: ?*c.wasm_trap_t = null;
-
-        var inputs: [2]c.wasmtime_val_t = undefined;
-        inputs[0].kind = c.WASMTIME_I32;
-        inputs[0].of.i32 = std.math.cast(i32, size) orelse {
-            return error.InvalidSize;
-        };
-
-        inputs[1].kind = c.WASMTIME_I32;
-        inputs[1].of.i32 = std.math.cast(i32, alignment) orelse {
-            return error.InvalidAlignment;
-        };
-
-        var result: c.wasmtime_val_t = undefined;
-
-        const err =
-            c.wasmtime_func_call(self.context, &self.alloc_fn, &inputs, inputs.len, &result, 1, &trap);
-
-        if (err != null or trap != null) {
-            return error.InternalError;
-        }
-
-        if (result.kind != c.WASMTIME_I32) {
-            return error.InvalidResponse;
-        }
-
-        return result.of.i32;
-    }
-
-    pub fn freeWasm(self: *WasmChamber, ptr: i32) !void {
-        var trap: ?*c.wasm_trap_t = null;
-
-        var input: c.wasmtime_val_t = undefined;
-        input.kind = c.WASMTIME_I32;
-        input.of.i32 = ptr;
-
-        const err =
-            c.wasmtime_func_call(self.context, &self.free_fn, &input, 1, null, 0, &trap);
 
         if (err != null or trap != null) {
             return error.InternalError;
@@ -207,67 +157,85 @@ pub const WasmChamber = struct {
         return result.of.i32;
     }
 
-    pub fn save(self: *WasmChamber, alloc: Allocator, state: i32) ![]const u8 {
+    fn saveMemory(self: *WasmChamber) !i32 {
         var trap: ?*c.wasm_trap_t = null;
 
-        const save_size: usize = std.math.cast(usize, try self.saveSize()) orelse {
-            return error.InternalError;
-        };
-        const save_data = try self.allocWasm(save_size, 1);
-        defer self.freeWasm(save_data) catch {
-            std.log.err("Failed to free save data", .{});
-        };
-
-        var inputs: [2]c.wasmtime_val_t = undefined;
-        inputs[0].kind = c.WASMTIME_I32;
-        inputs[0].of.i32 = state;
-
-        inputs[1].kind = c.WASMTIME_I32;
-        inputs[1].of.i32 = save_data;
+        var result: c.wasmtime_val_t = undefined;
 
         const err =
-            c.wasmtime_func_call(self.context, &self.save_fn, &inputs, inputs.len, null, 0, &trap);
+            c.wasmtime_func_call(self.context, &self.save_memory_fn, null, 0, &result, 1, &trap);
 
         if (err != null or trap != null) {
             return error.InternalError;
         }
 
+        if (result.kind != c.WASMTIME_I32) {
+            return error.InvalidResult;
+        }
+
+        return result.of.i32;
+    }
+
+    pub fn save(self: *WasmChamber, alloc: Allocator) ![]const u8 {
+        var trap: ?*c.wasm_trap_t = null;
+
+        const err =
+            c.wasmtime_func_call(self.context, &self.save_fn, null, 0, null, 0, &trap);
+
+        if (err != null or trap != null) {
+            return error.InternalError;
+        }
+
+        const save_data = try self.saveMemory();
         const offs = std.math.cast(usize, save_data) orelse {
             return error.InvalidOffset;
+        };
+        const save_size: usize = std.math.cast(usize, try self.saveSize()) orelse {
+            return error.InternalError;
         };
         const save_data_slice = try getWasmSlice(self.context, self.memory, offs, save_size);
 
         return alloc.dupe(u8, save_data_slice);
     }
 
-    pub fn step(self: *WasmChamber, state: i32, balls: []Ball, delta: f32) !void {
+    fn ballsMemory(self: *WasmChamber) !i32 {
         var trap: ?*c.wasm_trap_t = null;
 
-        const balls_ptr = try self.allocWasm(balls.len * @sizeOf(Ball), @alignOf(Ball));
-        defer self.freeWasm(balls_ptr) catch {
-            std.log.err("Failed to free balls ptr", .{});
-        };
+        var result: c.wasmtime_val_t = undefined;
+
+        const err =
+            c.wasmtime_func_call(self.context, &self.balls_memory_fn, null, 0, &result, 1, &trap);
+
+        if (err != null or trap != null) {
+            return error.InternalError;
+        }
+
+        if (result.kind != c.WASMTIME_I32) {
+            return error.InvalidResult;
+        }
+
+        return result.of.i32;
+    }
+
+    pub fn step(self: *WasmChamber, balls: []Ball, delta: f32) !void {
+        var trap: ?*c.wasm_trap_t = null;
+
+        const balls_ptr = try self.ballsMemory();
 
         const offs: usize = @intCast(balls_ptr);
         const wasm_balls_data = try getWasmSlice(self.context, self.memory, offs, balls.len * @sizeOf(Ball));
         const wasm_balls: []Ball = @alignCast(std.mem.bytesAsSlice(Ball, wasm_balls_data));
         @memcpy(wasm_balls[0..balls.len], balls);
 
-        var inputs: [4]c.wasmtime_val_t = undefined;
+        var inputs: [2]c.wasmtime_val_t = undefined;
         inputs[0].kind = c.WASMTIME_I32;
-        inputs[0].of.i32 = state;
+        inputs[0].of.i32 = @intCast(balls.len);
 
-        inputs[1].kind = c.WASMTIME_I32;
-        inputs[1].of.i32 = balls_ptr;
-
-        inputs[2].kind = c.WASMTIME_I32;
-        inputs[2].of.i32 = @intCast(balls.len);
-
-        inputs[3].kind = c.WASMTIME_F32;
-        inputs[3].of.f32 = delta;
+        inputs[1].kind = c.WASMTIME_F32;
+        inputs[1].of.f32 = delta;
 
         const err =
-            c.wasmtime_func_call(self.context, &self.step_fn, &inputs, 4, null, 0, &trap);
+            c.wasmtime_func_call(self.context, &self.step_fn, &inputs, 2, null, 0, &trap);
 
         if (err != null or trap != null) {
             return error.InternalError;

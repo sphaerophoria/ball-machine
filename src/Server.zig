@@ -228,7 +228,7 @@ const Connection = struct {
                     simulation.mutex.lock();
                     defer simulation.mutex.unlock();
 
-                    chamber_save = try simulation.chamber_mod.save(self.server.alloc, simulation.chamber_state);
+                    chamber_save = try simulation.chamber_mod.save(self.server.alloc);
 
                     break :blk ResponseJson{
                         .balls = simulation.balls,
