@@ -56,12 +56,6 @@ pub export fn init(max_balls: usize, max_chamber_pixels: usize) void {
     };
 }
 
-// FIXME: Is there a way to remove this function
-pub export fn deinit() void {
-    std.heap.wasm_allocator.free(balls);
-    std.heap.wasm_allocator.free(chamber_pixels);
-}
-
 pub export fn saveSize() usize {
     return save_size;
 }
@@ -75,7 +69,6 @@ pub export fn ballsMemory() [*]Ball {
 }
 
 pub export fn canvasMemory() i32 {
-    print("canvas memory at {*}\n", .{chamber_pixels.ptr});
     return @intCast(@intFromPtr(chamber_pixels.ptr));
 }
 
@@ -196,6 +189,7 @@ pub export fn step(num_balls: usize, delta: f32) void {
 }
 
 pub export fn render(canvas_width: usize, canvas_height: usize) void {
+    @memset(chamber_pixels, 0xffffffff);
     const canvas_width_f: f32 = @floatFromInt(canvas_width);
     const canvas_height_f: f32 = @floatFromInt(canvas_height);
     const num_y_px: usize = @intFromFloat(platform_height_norm * canvas_width_f);

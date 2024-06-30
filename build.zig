@@ -32,7 +32,7 @@ fn setupWasmtime(b: *std.Build, opt: std.builtin.OptimizeMode) !std.Build.LazyPa
     return lib_path;
 }
 
-pub fn buildChamber(b: *std.Build, name: []const u8, opt: std.builtin.OptimizeMode) !void {
+pub fn buildChamber(b: *std.Build, name: []const u8, opt: std.builtin.OptimizeMode) !std.Build.LazyPath {
     const path = try std.fmt.allocPrint(b.allocator, "src/chambers/{s}.zig", .{name});
     const chamber = b.addExecutable(.{
         .name = name,
@@ -46,6 +46,21 @@ pub fn buildChamber(b: *std.Build, name: []const u8, opt: std.builtin.OptimizeMo
     chamber.entry = .disabled;
     chamber.rdynamic = true;
     b.installArtifact(chamber);
+    return chamber.getEmittedBin();
+}
+
+pub fn buildClientSideSim(b: *std.Build, opt: std.builtin.OptimizeMode) !std.Build.LazyPath {
+    const sim = b.addExecutable(.{
+        .name = "simulation",
+        .root_source_file = b.path("src/simulation_c_api.zig"),
+        .target = b.resolveTargetQuery(std.zig.CrossTarget.parse(
+            .{ .arch_os_abi = "wasm32-freestanding" },
+        ) catch unreachable),
+        .optimize = opt,
+    });
+    sim.entry = .disabled;
+    sim.rdynamic = true;
+    return sim.getEmittedBin();
 }
 
 fn addMainDependencies(b: *std.Build, exe: *std.Build.Step.Compile, wasmtime_lib: std.Build.LazyPath, output: std.Build.LazyPath, opt: std.builtin.OptimizeMode) void {
@@ -79,13 +94,16 @@ pub fn build(b: *std.Build) !void {
         .target = b.host,
     });
 
-    try buildChamber(b, "simple", opt);
-    try buildChamber(b, "platforms", opt);
+    _ = try buildChamber(b, "simple", opt);
+    const platforms = try buildChamber(b, "platforms", opt);
+    const client_side_sim = try buildClientSideSim(b, opt);
 
     const generate_embedded_resources_step = b.addRunArtifact(generate_embedded_resources);
     const output = generate_embedded_resources_step.addOutputFileArg("resources.zig");
     _ = generate_embedded_resources_step.addDepFileOutputArg("deps.d");
     generate_embedded_resources_step.addDirectoryArg(b.path("src/res"));
+    generate_embedded_resources_step.addFileArg(client_side_sim);
+    generate_embedded_resources_step.addFileArg(platforms);
 
     const wasmtime_lib = try setupWasmtime(b, opt);
 

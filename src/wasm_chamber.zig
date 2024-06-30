@@ -1,5 +1,6 @@
 const std = @import("std");
 const physics = @import("physics.zig");
+const Chamber = @import("Chamber.zig");
 const Ball = physics.Ball;
 const Allocator = std.mem.Allocator;
 
@@ -48,7 +49,6 @@ pub const WasmLoader = struct {
         const save_fn = try loadWasmFn("save", context, &instance);
         const save_size_fn = try loadWasmFn("saveSize", context, &instance);
         const load_fn = try loadWasmFn("load", context, &instance);
-        const deinit_fn = try loadWasmFn("deinit", context, &instance);
 
         return .{
             .alloc = alloc,
@@ -63,7 +63,6 @@ pub const WasmLoader = struct {
             .save_fn = save_fn,
             .save_size_fn = save_size_fn,
             .load_fn = load_fn,
-            .deinit_fn = deinit_fn,
         };
     }
 };
@@ -80,14 +79,30 @@ pub const WasmChamber = struct {
     save_size_fn: c.wasmtime_func_t,
     balls_memory_fn: c.wasmtime_func_t,
     load_fn: c.wasmtime_func_t,
-    deinit_fn: c.wasmtime_func_t,
 
     pub fn deinit(self: *WasmChamber) void {
         self.alloc.destroy(self.memory);
         c.wasmtime_store_delete(self.store);
     }
 
-    pub fn initChamber(self: *WasmChamber, max_balls: usize) !void {
+    pub fn chamber(self: *WasmChamber) Chamber {
+        const global = struct {
+            var vtable = Chamber.Vtable{
+                .initChamber = initChamber,
+                .load = load,
+                .save = save,
+                .step = step,
+            };
+        };
+
+        return .{
+            .data = self,
+            .vtable = &global.vtable,
+        };
+    }
+
+    fn initChamber(ctx: ?*anyopaque, max_balls: usize) !void {
+        const self: *WasmChamber = @ptrCast(@alignCast(ctx));
         var trap: ?*c.wasm_trap_t = null;
 
         var inputs: [2]c.wasmtime_val_t = undefined;
@@ -105,7 +120,8 @@ pub const WasmChamber = struct {
         }
     }
 
-    pub fn load(self: *WasmChamber, data: []const u8) !void {
+    fn load(ctx: ?*anyopaque, data: []const u8) !void {
+        const self: *WasmChamber = @ptrCast(@alignCast(ctx));
         var trap: ?*c.wasm_trap_t = null;
 
         const wasm_ptr = try self.saveMemory();
@@ -118,20 +134,6 @@ pub const WasmChamber = struct {
 
         const err =
             c.wasmtime_func_call(self.context, &self.load_fn, null, 0, null, 0, &trap);
-
-        if (err != null or trap != null) {
-            return error.InternalError;
-        }
-    }
-
-    pub fn deinitChamber(self: *WasmChamber, state: i32) !void {
-        var trap: ?*c.wasm_trap_t = null;
-
-        var input: c.wasmtime_val_t = undefined;
-        input.kind = c.WASMTIME_I32;
-        input.of.i32 = state;
-        const err =
-            c.wasmtime_func_call(self.context, &self.deinit_fn, &input, 1, null, 0, &trap);
 
         if (err != null or trap != null) {
             return error.InternalError;
@@ -176,7 +178,8 @@ pub const WasmChamber = struct {
         return result.of.i32;
     }
 
-    pub fn save(self: *WasmChamber, alloc: Allocator) ![]const u8 {
+    fn save(ctx: ?*anyopaque, alloc: Allocator) ![]const u8 {
+        const self: *WasmChamber = @ptrCast(@alignCast(ctx));
         var trap: ?*c.wasm_trap_t = null;
 
         const err =
@@ -217,7 +220,8 @@ pub const WasmChamber = struct {
         return result.of.i32;
     }
 
-    pub fn step(self: *WasmChamber, balls: []Ball, delta: f32) !void {
+    fn step(ctx: ?*anyopaque, balls: []Ball, delta: f32) !void {
+        const self: *WasmChamber = @ptrCast(@alignCast(ctx));
         var trap: ?*c.wasm_trap_t = null;
 
         const balls_ptr = try self.ballsMemory();

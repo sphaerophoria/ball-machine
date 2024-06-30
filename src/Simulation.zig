@@ -1,8 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const resources = @import("resources");
 const Allocator = std.mem.Allocator;
-const wasm_chamber = @import("wasm_chamber.zig");
+const Chamber = @import("Chamber.zig");
 const physics = @import("physics.zig");
 const Pos2 = physics.Pos2;
 const Vec2 = physics.Vec2;
@@ -16,20 +15,32 @@ pub const step_len_s: f32 = @as(f32, @floatFromInt(step_len_ns)) / 1_000_000_000
 
 const ball_radius = 0.025;
 
-mutex: std.Thread.Mutex,
+const DummyMutex = struct {
+    pub fn lock(_: *DummyMutex) void {}
+    pub fn unlock(_: *DummyMutex) void {}
+};
+
+fn MutexType() type {
+    if (builtin.target.isWasm()) {
+        return DummyMutex;
+    } else {
+        return std.Thread.Mutex;
+    }
+}
+
+mutex: MutexType(),
 balls: [num_balls]Ball,
 prng: std.rand.DefaultPrng,
-chamber_mod: wasm_chamber.WasmChamber,
+chamber_mod: Chamber,
 history: SimulationHistory,
 num_steps_taken: u64,
 
-pub fn init(alloc: Allocator, seed: usize, chamber_mod_const: wasm_chamber.WasmChamber) !Simulation {
-    var chamber_mod = chamber_mod_const;
+pub fn init(alloc: Allocator, seed: usize, chamber_mod: Chamber) !Simulation {
     var prng = std.Random.DefaultPrng.init(seed);
     const balls = makeBalls(&prng);
     try chamber_mod.initChamber(num_balls);
     return .{
-        .mutex = std.Thread.Mutex{},
+        .mutex = MutexType(){},
         .num_steps_taken = 0,
         .prng = prng,
         .balls = balls,
