@@ -32,7 +32,7 @@ fn setupWasmtime(b: *std.Build, opt: std.builtin.OptimizeMode) !std.Build.LazyPa
     return lib_path;
 }
 
-pub fn buildChamber(b: *std.Build, name: []const u8, opt: std.builtin.OptimizeMode) !void {
+pub fn buildChamber(b: *std.Build, chambers_step: *std.Build.Step, name: []const u8, opt: std.builtin.OptimizeMode) !void {
     const path = try std.fmt.allocPrint(b.allocator, "src/chambers/{s}.zig", .{name});
     const chamber = b.addExecutable(.{
         .name = name,
@@ -46,6 +46,7 @@ pub fn buildChamber(b: *std.Build, name: []const u8, opt: std.builtin.OptimizeMo
     chamber.entry = .disabled;
     chamber.rdynamic = true;
     b.installArtifact(chamber);
+    chambers_step.dependOn(&b.addInstallArtifact(chamber, .{}).step);
 }
 
 fn addMainDependencies(b: *std.Build, exe: *std.Build.Step.Compile, wasmtime_lib: std.Build.LazyPath, output: std.Build.LazyPath, opt: std.builtin.OptimizeMode) void {
@@ -69,6 +70,7 @@ fn addMainDependencies(b: *std.Build, exe: *std.Build.Step.Compile, wasmtime_lib
 }
 pub fn build(b: *std.Build) !void {
     const test_step = b.step("test", "Run unit tests");
+    const chambers = b.step("chambers", "Chambers only");
 
     const target = b.standardTargetOptions(.{});
     const opt = b.standardOptimizeOption(.{});
@@ -79,8 +81,8 @@ pub fn build(b: *std.Build) !void {
         .target = b.host,
     });
 
-    try buildChamber(b, "simple", opt);
-    try buildChamber(b, "platforms", opt);
+    try buildChamber(b, chambers, "simple", opt);
+    try buildChamber(b, chambers, "platforms", opt);
 
     const generate_embedded_resources_step = b.addRunArtifact(generate_embedded_resources);
     const output = generate_embedded_resources_step.addOutputFileArg("resources.zig");
