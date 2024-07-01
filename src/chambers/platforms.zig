@@ -142,54 +142,6 @@ pub export fn step(num_balls: usize, delta: f32) void {
             state.platform_locs[i] = 2.0 - state.platform_locs[i];
         }
     }
-
-    const walls: [3]Surface = .{
-        .{
-            .a = .{
-                .x = 0.0,
-                .y = 1.0,
-            },
-            .b = .{
-                .x = 0.0,
-                .y = 0.0,
-            },
-        },
-        .{
-            .a = .{
-                .x = 0.0,
-                .y = 0.0,
-            },
-            .b = .{
-                .x = 1.0,
-                .y = 0.0,
-            },
-        },
-        .{
-            .a = .{
-                .x = 1.0,
-                .y = 0.0,
-            },
-            .b = .{
-                .x = 1.0,
-                .y = 1.0,
-            },
-        },
-    };
-
-    for (walls) |wall| {
-        for (balls[0..num_balls]) |*ball| {
-            const obj_normal = wall.normal();
-            const ball_collision_point_offs = obj_normal.mul(-ball.r);
-            const ball_collision_point = ball.pos.add(ball_collision_point_offs);
-
-            const resolution = wall.collisionResolution(ball_collision_point, ball.velocity.mul(delta));
-            if (resolution) |r| {
-                physics.applyCollision(ball, r, obj_normal, delta);
-            }
-
-            wall.pushIfColliding(ball, delta);
-        }
-    }
 }
 
 pub export fn render(canvas_width: usize, canvas_height: usize) void {
