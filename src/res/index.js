@@ -17,7 +17,7 @@ class RemoteSimulation {
   constructor(id, chamber) {
     this.chamber = chamber;
 
-    this.canvas = new SimulationRenderer();
+    this.canvas = new SimulationRenderer(document.body);
     this.chamber_pixel_len =
       this.canvas.canvas.width * this.canvas.canvas.height * 4;
     chamber.instance.exports.init(0, this.chamber_pixel_len);

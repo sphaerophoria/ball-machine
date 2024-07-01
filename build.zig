@@ -49,6 +49,20 @@ pub fn buildChamber(b: *std.Build, chambers_step: *std.Build.Step, name: []const
     chambers_step.dependOn(&b.addInstallArtifact(chamber, .{}).step);
 }
 
+pub fn buildClientSideSim(b: *std.Build, opt: std.builtin.OptimizeMode) !std.Build.LazyPath {
+    const sim = b.addExecutable(.{
+        .name = "simulation",
+        .root_source_file = b.path("src/simulation_wasm.zig"),
+        .target = b.resolveTargetQuery(std.zig.CrossTarget.parse(
+            .{ .arch_os_abi = "wasm32-freestanding" },
+        ) catch unreachable),
+        .optimize = opt,
+    });
+    sim.entry = .disabled;
+    sim.rdynamic = true;
+    return sim.getEmittedBin();
+}
+
 fn addMainDependencies(b: *std.Build, exe: *std.Build.Step.Compile, wasmtime_lib: std.Build.LazyPath, output: std.Build.LazyPath, opt: std.builtin.OptimizeMode) void {
     exe.root_module.addAnonymousImport("resources", .{ .root_source_file = output });
     exe.addLibraryPath(wasmtime_lib.dirname());
@@ -83,11 +97,13 @@ pub fn build(b: *std.Build) !void {
 
     try buildChamber(b, chambers, "simple", opt);
     try buildChamber(b, chambers, "platforms", opt);
+    const client_side_sim = try buildClientSideSim(b, opt);
 
     const generate_embedded_resources_step = b.addRunArtifact(generate_embedded_resources);
     const output = generate_embedded_resources_step.addOutputFileArg("resources.zig");
     _ = generate_embedded_resources_step.addDepFileOutputArg("deps.d");
     generate_embedded_resources_step.addDirectoryArg(b.path("src/res"));
+    generate_embedded_resources_step.addFileArg(client_side_sim);
 
     const wasmtime_lib = try setupWasmtime(b, opt);
 

@@ -1,5 +1,5 @@
 export class SimulationRenderer {
-  constructor() {
+  constructor(parent) {
     const top_div = document.createElement("div");
     const canvas_div = document.createElement("div");
     top_div.append(canvas_div);
@@ -22,7 +22,7 @@ export class SimulationRenderer {
     button_div.append(this.reset_button);
 
     this.reset_button.innerHTML = "Reset";
-    document.body.appendChild(top_div);
+    parent.appendChild(top_div);
   }
 
   render(balls, chamber) {
