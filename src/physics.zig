@@ -165,7 +165,7 @@ fn pointWithinLineBounds(p: Pos2, a: Pos2, b: Pos2) bool {
     return within_x_bounds or within_y_bounds;
 }
 
-const ball_elasticity_multiplier = 0.85;
+const ball_elasticity_multiplier = 0.90;
 
 pub fn applyCollision(ball: *Ball, resolution: Vec2, obj_normal: Vec2, delta: f32) void {
     const vel_ground_proj_mag = ball.velocity.dot(obj_normal);

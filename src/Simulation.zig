@@ -99,7 +99,7 @@ fn applyGravity(ball: *Ball, delta: f32) void {
 }
 
 fn clampSpeed(ball: *Ball) void {
-    const max_speed = 3.0;
+    const max_speed = 2.5;
     const max_speed_2 = max_speed * max_speed;
     const ball_speed_2 = ball.velocity.length_2();
     if (ball_speed_2 > max_speed_2) {
