@@ -69,7 +69,6 @@ pub export fn ballsMemory() [*]Ball {
 }
 
 pub export fn canvasMemory() i32 {
-    print("canvas memory at {*}\n", .{chamber_pixels.ptr});
     return @intCast(@intFromPtr(chamber_pixels.ptr));
 }
 
