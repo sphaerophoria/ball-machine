@@ -362,6 +362,19 @@ const Connection = struct {
                 };
                 return try http.Writer.init(self.server.alloc, response_header, username, true);
             },
+            .redirect => |loc| {
+                const header = http.Header{
+                    .content_type = .@"text/html",
+                    .status = std.http.Status.see_other,
+                    .content_length = 0,
+                    .extra = &.{.{
+                        .key = "Location",
+                        .value = loc,
+                    }},
+                };
+
+                return try http.Writer.init(self.server.alloc, header, "", false);
+            },
             .get_resource => {
                 if (self.server.www_root) |root| {
                     if (getResourcePathAlloc(self.server.alloc, root, reader.target)) |p| {
@@ -566,6 +579,7 @@ const UrlPurpose = union(enum) {
     upload: void,
     userinfo: void,
     get_resource: void,
+    redirect: []const u8,
     num_simulations: void,
 
     const IndexedTargetOption = enum {
@@ -627,6 +641,7 @@ const UrlPurpose = union(enum) {
         @"/upload",
         @"/userinfo",
         @"/num_simulations",
+        @"/",
     };
 
     fn parse(target: []const u8) !UrlPurpose {
@@ -647,6 +662,9 @@ const UrlPurpose = union(enum) {
                 },
                 .@"/num_simulations" => {
                     return UrlPurpose{ .num_simulations = {} };
+                },
+                .@"/" => {
+                    return UrlPurpose{ .redirect = "/index.html" };
                 },
             }
         }
