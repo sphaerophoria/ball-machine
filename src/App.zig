@@ -2,10 +2,11 @@ const std = @import("std");
 const Allocator = std.mem.Allocator;
 const Simulation = @import("Simulation.zig");
 const wasm_chamber = @import("wasm_chamber.zig");
+const Chamber = @import("Chamber.zig");
 const Db = @import("Db.zig");
 
 const ChamberIds = std.ArrayListUnmanaged(i64);
-const ChamberMods = std.ArrayListUnmanaged(wasm_chamber.WasmChamber);
+const ChamberMods = std.ArrayListUnmanaged(*wasm_chamber.WasmChamber);
 const Simulations = std.ArrayListUnmanaged(Simulation);
 
 const App = @This();
@@ -114,10 +115,12 @@ pub fn appendChamber(self: *App, db_id: i64, data: []const u8) !void {
     self.mutex.lock();
     defer self.mutex.unlock();
 
-    var chamber = try self.wasm_loader.load(self.alloc, data);
+    const chamber = try self.alloc.create(wasm_chamber.WasmChamber);
+    errdefer self.alloc.destroy(chamber);
+    chamber.* = try self.wasm_loader.load(self.alloc, data);
     errdefer chamber.deinit();
 
-    var simulation = try initSimulation(self.alloc, chamber);
+    var simulation = try initSimulation(self.alloc, chamber.chamber());
     errdefer simulation.deinit();
 
     if (self.simulations.items.len > 0) {
@@ -145,8 +148,9 @@ fn deinitSimulations(alloc: Allocator, simulations: *Simulations) void {
 }
 
 fn deinitChamberMods(alloc: Allocator, chambers: *ChamberMods) void {
-    for (chambers.items) |*chamber| {
+    for (chambers.items) |chamber| {
         chamber.deinit();
+        alloc.destroy(chamber);
     }
     chambers.deinit(alloc);
 }
@@ -163,7 +167,7 @@ fn loadChamber(alloc: Allocator, wasm_loader: *wasm_chamber.WasmLoader, path: []
     return chamber;
 }
 
-fn initSimulation(alloc: Allocator, mod: wasm_chamber.WasmChamber) !Simulation {
+fn initSimulation(alloc: Allocator, mod: Chamber) !Simulation {
     var seed: usize = undefined;
     try std.posix.getrandom(std.mem.asBytes(&seed));
 

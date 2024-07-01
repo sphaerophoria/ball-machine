@@ -1,5 +1,6 @@
 const std = @import("std");
 const physics = @import("physics.zig");
+const Chamber = @import("Chamber.zig");
 const Ball = physics.Ball;
 const Allocator = std.mem.Allocator;
 
@@ -84,7 +85,24 @@ pub const WasmChamber = struct {
         c.wasmtime_store_delete(self.store);
     }
 
-    pub fn initChamber(self: *WasmChamber, max_balls: usize) !void {
+    pub fn chamber(self: *WasmChamber) Chamber {
+        const global = struct {
+            var vtable = Chamber.Vtable{
+                .initChamber = initChamber,
+                .load = load,
+                .save = save,
+                .step = step,
+            };
+        };
+
+        return .{
+            .data = self,
+            .vtable = &global.vtable,
+        };
+    }
+
+    fn initChamber(ctx: ?*anyopaque, max_balls: usize) !void {
+        const self: *WasmChamber = @ptrCast(@alignCast(ctx));
         var trap: ?*c.wasm_trap_t = null;
 
         var inputs: [2]c.wasmtime_val_t = undefined;
@@ -102,7 +120,8 @@ pub const WasmChamber = struct {
         }
     }
 
-    pub fn load(self: *WasmChamber, data: []const u8) !void {
+    fn load(ctx: ?*anyopaque, data: []const u8) !void {
+        const self: *WasmChamber = @ptrCast(@alignCast(ctx));
         var trap: ?*c.wasm_trap_t = null;
 
         const wasm_ptr = try self.saveMemory();
@@ -159,7 +178,8 @@ pub const WasmChamber = struct {
         return result.of.i32;
     }
 
-    pub fn save(self: *WasmChamber, alloc: Allocator) ![]const u8 {
+    fn save(ctx: ?*anyopaque, alloc: Allocator) ![]const u8 {
+        const self: *WasmChamber = @ptrCast(@alignCast(ctx));
         var trap: ?*c.wasm_trap_t = null;
 
         const err =
@@ -200,7 +220,8 @@ pub const WasmChamber = struct {
         return result.of.i32;
     }
 
-    pub fn step(self: *WasmChamber, balls: []Ball, delta: f32) !void {
+    fn step(ctx: ?*anyopaque, balls: []Ball, delta: f32) !void {
+        const self: *WasmChamber = @ptrCast(@alignCast(ctx));
         var trap: ?*c.wasm_trap_t = null;
 
         const balls_ptr = try self.ballsMemory();
