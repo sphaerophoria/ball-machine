@@ -17,12 +17,12 @@ def signal_handler(sig, frame):
 def main():
     global process
     signal.signal(signal.SIGINT, signal_handler)
-    subprocess.run(["zig", "build", "--summary", "all"], check=True)
     subprocess.run(["zig", "fmt", "build.zig", "--check"], check=True)
     subprocess.run(["zig", "fmt", "src", "--check"], check=True)
     subprocess.run(["prettier", "-c", "src/"], check=True)
     subprocess.run(["jshint", "src/"], check=True)
     subprocess.run(["black", "--check", "src", "test", "lint.py"], check=True)
+    subprocess.run(["zig", "build", "--summary", "all"], check=True)
     subprocess.run(["zig", "build", "test"], check=True)
     subprocess.run(["zig", "build", "-Doptimize=ReleaseSafe"], check=True)
 
