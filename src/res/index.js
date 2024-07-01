@@ -91,7 +91,6 @@ class Chamber {
 
     const img_data = new ImageData(arr, this.canvas.width, this.canvas.height);
     ctx.putImageData(img_data, 0, 0);
-    this.chamber.instance.exports.deinit();
 
     ctx.beginPath();
     ctx.strokeStyle = "black";

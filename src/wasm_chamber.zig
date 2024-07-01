@@ -48,7 +48,6 @@ pub const WasmLoader = struct {
         const save_fn = try loadWasmFn("save", context, &instance);
         const save_size_fn = try loadWasmFn("saveSize", context, &instance);
         const load_fn = try loadWasmFn("load", context, &instance);
-        const deinit_fn = try loadWasmFn("deinit", context, &instance);
 
         return .{
             .alloc = alloc,
@@ -63,7 +62,6 @@ pub const WasmLoader = struct {
             .save_fn = save_fn,
             .save_size_fn = save_size_fn,
             .load_fn = load_fn,
-            .deinit_fn = deinit_fn,
         };
     }
 };
@@ -80,7 +78,6 @@ pub const WasmChamber = struct {
     save_size_fn: c.wasmtime_func_t,
     balls_memory_fn: c.wasmtime_func_t,
     load_fn: c.wasmtime_func_t,
-    deinit_fn: c.wasmtime_func_t,
 
     pub fn deinit(self: *WasmChamber) void {
         self.alloc.destroy(self.memory);
@@ -118,20 +115,6 @@ pub const WasmChamber = struct {
 
         const err =
             c.wasmtime_func_call(self.context, &self.load_fn, null, 0, null, 0, &trap);
-
-        if (err != null or trap != null) {
-            return error.InternalError;
-        }
-    }
-
-    pub fn deinitChamber(self: *WasmChamber, state: i32) !void {
-        var trap: ?*c.wasm_trap_t = null;
-
-        var input: c.wasmtime_val_t = undefined;
-        input.kind = c.WASMTIME_I32;
-        input.of.i32 = state;
-        const err =
-            c.wasmtime_func_call(self.context, &self.deinit_fn, &input, 1, null, 0, &trap);
 
         if (err != null or trap != null) {
             return error.InternalError;

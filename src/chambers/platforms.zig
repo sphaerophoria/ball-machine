@@ -56,12 +56,6 @@ pub export fn init(max_balls: usize, max_chamber_pixels: usize) void {
     };
 }
 
-// FIXME: Is there a way to remove this function
-pub export fn deinit() void {
-    std.heap.wasm_allocator.free(balls);
-    std.heap.wasm_allocator.free(chamber_pixels);
-}
-
 pub export fn saveSize() usize {
     return save_size;
 }

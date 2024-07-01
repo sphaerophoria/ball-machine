@@ -31,8 +31,6 @@ pub export fn init(max_balls: usize, max_chamber_pixels: usize) void {
     };
 }
 
-pub export fn deinit() void {}
-
 pub export fn saveMemory() ?*void {
     return null;
 }
