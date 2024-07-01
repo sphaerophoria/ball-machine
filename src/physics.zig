@@ -141,6 +141,65 @@ pub const Surface = struct {
         return adjustment;
     }
 
+    pub fn pushIfColliding(self: *const Surface, ball: *Ball, delta: f32) void {
+        const n = self.normal();
+
+        if (ball.velocity.dot(n) > 0) {
+            return;
+        }
+
+        const pa = self.a.sub(ball.pos);
+        const pb = self.b.sub(ball.pos);
+        const ab = self.b.sub(self.a);
+
+        const dpa = pa.dot(ab);
+        const dpb = pb.dot(ab);
+
+        const r_2 = ball.r * ball.r;
+        const most_overlapping_point = blk: {
+            if (dpa > 0 and dpb > 0) {
+                if (pa.length_2() > r_2) {
+                    return;
+                }
+
+                break :blk ball.pos.add(pa.normalized().mul(ball.r));
+            } else if (dpa < 0 and dpb < 0) {
+                if (pb.length_2() > r_2) {
+                    return;
+                }
+
+                break :blk ball.pos.add(pb.normalized().mul(ball.r));
+            } else {
+                break :blk ball.pos.add(n.mul(-ball.r));
+            }
+        };
+
+        const overlap_amount = self.b.sub(most_overlapping_point).dot(n);
+        const max_push = 0.001;
+
+        // In some cases the ball may be coming from under the surface. In
+        // these cases we actually do not want to apply the push unless the
+        // ball is very close to making it all the way through. Otherwise we
+        // either do a bunch of continual small pushes, which makes the ball
+        // movement slow and weird, or we snap the ball all the way through the
+        // surface which is jarring. Limit the push to 1/4 the diameter of the ball
+        const collision_zone = ball.r / 2.0;
+
+        if (overlap_amount > 0.0 and overlap_amount < collision_zone) {
+            const bn: Vec2 = .{
+                .x = n.y,
+                .y = n.x,
+            };
+
+            const preserved_velocity = bn.mul(ball.velocity.dot(bn));
+            const push_amount = @min(overlap_amount, max_push);
+            const frame_push = n.mul(push_amount);
+            const push_velocity = frame_push.mul(1.01 / delta);
+            ball.velocity = push_velocity.add(preserved_velocity);
+            ball.pos = ball.pos.add(n.mul(overlap_amount));
+        }
+    }
+
     pub fn normal(self: *const Surface) Vec2 {
         var v = self.b.sub(self.a);
         v = v.mul(1.0 / v.length());

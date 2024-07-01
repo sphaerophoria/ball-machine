@@ -131,6 +131,8 @@ pub export fn step(num_balls: usize, delta: f32) void {
                 ball.velocity.x += (movement / delta - ball.velocity.x) * 0.3;
                 physics.applyCollision(ball, r, obj_normal, delta);
             }
+
+            obj.pushIfColliding(ball, delta);
         }
         state.platform_locs[i] += movement;
         state.platform_locs[i] = @mod(state.platform_locs[i], 2.0);
@@ -169,7 +171,7 @@ pub export fn step(num_balls: usize, delta: f32) void {
             },
             .b = .{
                 .x = 1.0,
-                .y = 0.0,
+                .y = 1.0,
             },
         },
     };
@@ -184,6 +186,8 @@ pub export fn step(num_balls: usize, delta: f32) void {
             if (resolution) |r| {
                 physics.applyCollision(ball, r, obj_normal, delta);
             }
+
+            wall.pushIfColliding(ball, delta);
         }
     }
 }
