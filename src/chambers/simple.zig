@@ -68,6 +68,8 @@ pub export fn step(num_balls: usize, delta: f32) void {
 }
 
 pub export fn render(canvas_width: usize, canvas_height: usize) void {
+    @memset(chamber_pixels, 0xffffffff);
+
     const canvas_width_f: f32 = @floatFromInt(canvas_width);
     const canvas_height_f: f32 = @floatFromInt(canvas_height);
     const x_start_px: usize = @intFromFloat(platform.a.x * canvas_width_f);

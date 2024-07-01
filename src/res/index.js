@@ -80,14 +80,13 @@ class Chamber {
     loadChamber(this.chamber, simulation_state);
     ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
 
+    this.chamber.instance.exports.render(this.canvas.width, this.canvas.height);
+
     const arr = getChamberPixels(
       this.chamber,
       this.chamber_pixel_data,
       this.chamber_pixel_len,
     );
-    arr.fill(0xff);
-
-    this.chamber.instance.exports.render(this.canvas.width, this.canvas.height);
 
     const img_data = new ImageData(arr, this.canvas.width, this.canvas.height);
     ctx.putImageData(img_data, 0, 0);
