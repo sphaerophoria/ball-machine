@@ -132,7 +132,7 @@ def main():
 
     upload_module("simple.wasm")
     upload_module("platforms.wasm")
-    upload_module("plinko.wasm")
+    upload_module("counter.wasm")
     upload_module("plinko.wasm")
 
     new_num_chambers = int(get("/num_chambers"))

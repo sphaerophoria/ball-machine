@@ -8,7 +8,7 @@ function getBalls(simulation) {
   const state_arr = new Uint8Array(
     simulation.instance.exports.memory.buffer,
     state_ptr,
-    4096,
+    16384,
   );
 
   const js_len = state_arr.indexOf(0);

@@ -29,6 +29,7 @@ pkgs.mkShell {
     sqlitebrowser
     pyright
     black
+    rustPlatform.bindgenHook
   ];
 }
 

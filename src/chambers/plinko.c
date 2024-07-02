@@ -98,8 +98,8 @@ void step(size_t num_balls, float delta) {
 
     for (size_t ball_idx = 0; ball_idx < num_balls; ++ball_idx) {
       struct ball* ball = &balls_memory[ball_idx];
-      const struct vec2 offs = pos2_sub(ball->pos, peg_pos);
-      float const diff = vec2_length(offs);
+      const struct vec2 offs = pos2_sub(&ball->pos, &peg_pos);
+      float const diff = vec2_length(&offs);
       float const combined_r = PEG_RADIUS + ball->r;
 
       float const resolution_magnitude = combined_r - diff;
@@ -107,10 +107,10 @@ void step(size_t num_balls, float delta) {
         continue;
       }
 
+      const struct vec2 normalized_offs = vec2_normalized(&offs);
       const struct vec2 resolution =
-          vec2_mul(vec2_normalized(offs), resolution_magnitude);
-      apply_ball_collision(ball, resolution, vec2_normalized(offs), delta,
-                           0.35);
+          vec2_mul(&normalized_offs, resolution_magnitude);
+      apply_ball_collision(ball, &resolution, &normalized_offs, delta, 0.35);
     }
   }
 }

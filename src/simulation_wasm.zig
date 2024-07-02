@@ -88,7 +88,7 @@ pub export fn stepUntil(time_s: f32) void {
     }
 }
 
-var state_buf: [4096]u8 = undefined;
+var state_buf: [16384]u8 = undefined;
 
 pub export fn state() [*]u8 {
     @memset(&state_buf, 0);

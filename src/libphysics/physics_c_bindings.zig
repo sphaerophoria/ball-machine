@@ -57,60 +57,60 @@ comptime {
     assertFnSignitures();
 }
 
-pub export fn pos2_add(p: Pos2, v: Vec2) Pos2 {
-    return p.add(v);
+pub export fn pos2_add(p: *const Pos2, v: *const Vec2) Pos2 {
+    return p.add(v.*);
 }
 
-pub export fn pos2_sub(a: Pos2, b: Pos2) Vec2 {
-    return a.sub(b);
+pub export fn pos2_sub(a: *const Pos2, b: *const Pos2) Vec2 {
+    return a.sub(b.*);
 }
 
-pub export fn vec2_length_2(self: Vec2) f32 {
+pub export fn vec2_length_2(self: *const Vec2) f32 {
     return self.length_2();
 }
 
-pub export fn vec2_length(self: Vec2) f32 {
+pub export fn vec2_length(self: *const Vec2) f32 {
     return self.length();
 }
 
-pub export fn vec2_add(a: Vec2, b: Vec2) Vec2 {
-    return a.add(b);
+pub export fn vec2_add(a: *const Vec2, b: *const Vec2) Vec2 {
+    return a.add(b.*);
 }
 
-pub export fn vec2_sub(a: Vec2, b: Vec2) Vec2 {
-    return a.sub(b);
+pub export fn vec2_sub(a: *const Vec2, b: *const Vec2) Vec2 {
+    return a.sub(b.*);
 }
 
-pub export fn vec2_mul(self: Vec2, val: f32) Vec2 {
+pub export fn vec2_mul(self: *const Vec2, val: f32) Vec2 {
     return self.mul(val);
 }
 
-pub export fn vec2_dot(a: Vec2, b: Vec2) f32 {
-    return a.dot(b);
+pub export fn vec2_dot(a: *const Vec2, b: *const Vec2) f32 {
+    return a.dot(b.*);
 }
 
-pub export fn vec2_normalized(self: Vec2) Vec2 {
+pub export fn vec2_normalized(self: *const Vec2) Vec2 {
     return self.normalized();
 }
 
-pub export fn surface_collision_resolution(surface: Surface, p: Pos2, v: Vec2, out: *Vec2) bool {
-    if (surface.collisionResolution(p, v)) |res| {
+pub export fn surface_collision_resolution(surface: *const Surface, p: *const Pos2, v: *const Vec2, out: *Vec2) bool {
+    if (surface.collisionResolution(p.*, v.*)) |res| {
         out.* = res;
         return true;
     }
     return false;
 }
 
-pub export fn surface_push_if_colliding(surface: Surface, ball: *Ball, delta: f32) void {
+pub export fn surface_push_if_colliding(surface: *const Surface, ball: *Ball, delta: f32) void {
     return surface.pushIfColliding(ball, delta);
 }
 
-pub export fn surface_normal(surface: Surface) Vec2 {
+pub export fn surface_normal(surface: *const Surface) Vec2 {
     return surface.normal();
 }
 
-pub export fn apply_ball_collision(ball: *Ball, resolution: Vec2, obj_normal: Vec2, delta: f32, elasticity: f32) void {
-    physics.applyCollision(ball, resolution, obj_normal, delta, elasticity);
+pub export fn apply_ball_collision(ball: *Ball, resolution: *const Vec2, obj_normal: *const Vec2, delta: f32, elasticity: f32) void {
+    physics.applyCollision(ball, resolution.*, obj_normal.*, delta, elasticity);
 }
 
 pub export fn apply_ball_ball_collision(a: *Ball, b: *Ball) void {
