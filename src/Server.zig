@@ -214,8 +214,19 @@ const Connection = struct {
                 };
                 return try http.Writer.init(self.server.alloc, response_header, chamber_height, true);
             },
-            .num_simulations => {
-                const num_sims_s = try std.fmt.allocPrint(self.server.alloc, "{d}", .{self.server.app.simulations.items.len});
+            .chambers_per_row => {
+                const chambers_per_row = try std.fmt.allocPrint(self.server.alloc, "{d}", .{Simulation.chambers_per_row});
+                errdefer self.server.alloc.free(chambers_per_row);
+
+                const response_header = http.Header{
+                    .status = .ok,
+                    .content_type = .@"application/json",
+                    .content_length = chambers_per_row.len,
+                };
+                return try http.Writer.init(self.server.alloc, response_header, chambers_per_row, true);
+            },
+            .num_chambers => {
+                const num_sims_s = try std.fmt.allocPrint(self.server.alloc, "{d}", .{self.server.app.simulation.chambers.items.len});
                 errdefer self.server.alloc.free(num_sims_s);
 
                 const response_header = http.Header{
@@ -225,28 +236,16 @@ const Connection = struct {
                 };
                 return try http.Writer.init(self.server.alloc, response_header, num_sims_s, true);
             },
-            .simulation_state => |id| {
-                const simulation = try self.getSimulation(id);
-                const ResponseJson = struct {
-                    balls: [Simulation.num_balls]Ball,
-                    chamber_state: []const u8,
-                };
+            .simulation_state => {
+                const simulation = &self.server.app.simulation;
 
-                var chamber_save: []const u8 = &.{};
-                defer self.server.alloc.free(chamber_save);
-
-                const response_content = blk: {
-                    chamber_save = try simulation.chamber_mod.save(self.server.alloc);
-
-                    break :blk ResponseJson{
-                        .balls = simulation.balls,
-                        .chamber_state = chamber_save,
-                    };
-                };
+                var serializer = try SimulationStateSerializer.init(self.server.alloc, simulation);
+                defer serializer.deinit();
 
                 var out_buf = try std.ArrayList(u8).initCapacity(self.server.alloc, 4096);
                 errdefer out_buf.deinit();
-                try std.json.stringify(response_content, .{ .emit_strings_as_arrays = true }, out_buf.writer());
+
+                try std.json.stringify(serializer, .{ .emit_strings_as_arrays = true }, out_buf.writer());
 
                 const response_body = try out_buf.toOwnedSlice();
                 errdefer self.server.alloc.free(response_body);
@@ -258,8 +257,8 @@ const Connection = struct {
                 };
                 return try http.Writer.init(self.server.alloc, response_header, response_body, true);
             },
-            .reset => |id| {
-                const simulation = try self.getSimulation(id);
+            .reset => {
+                const simulation = &self.server.app.simulation;
                 simulation.reset();
                 const response_header = http.Header{
                     .status = .ok,
@@ -310,6 +309,7 @@ const Connection = struct {
                 const chamber_name = parts.get("name") orelse {
                     return error.NoChamberName;
                 };
+
                 const chamber = parts.get("chamber") orelse {
                     return error.NoChamber;
                 };
@@ -415,6 +415,75 @@ const Connection = struct {
                 },
                 .deinit => return .deinit,
             }
+        }
+    }
+};
+
+const SimulationStateSerializer = struct {
+    alloc: Allocator,
+    chamber_balls: std.ArrayListUnmanaged(Simulation.ChamberBalls) = .{},
+    chamber_saves: std.ArrayListUnmanaged([]const u8) = .{},
+
+    pub fn init(alloc: Allocator, simulation: *const Simulation) !SimulationStateSerializer {
+        var ret = SimulationStateSerializer{
+            .alloc = alloc,
+        };
+        errdefer ret.deinit();
+
+        try ret.populate(simulation);
+        return ret;
+    }
+
+    pub fn deinit(self: *SimulationStateSerializer) void {
+        for (self.chamber_balls.items) |*item| {
+            item.deinit(self.alloc);
+        }
+        self.chamber_balls.deinit(self.alloc);
+
+        for (self.chamber_saves.items) |save| {
+            self.alloc.free(save);
+        }
+        self.chamber_saves.deinit(self.alloc);
+    }
+
+    pub fn jsonStringify(self: *const SimulationStateSerializer, writer: anytype) @TypeOf(writer.*).Error!void {
+        try writer.beginObject();
+        try writer.objectField("chamber_balls");
+        {
+            try writer.beginArray();
+
+            for (self.chamber_balls.items) |item| {
+                try writer.write(item.items(.adjusted));
+            }
+
+            try writer.endArray();
+        }
+
+        try writer.objectField("chamber_states");
+        {
+            try writer.beginArray();
+            for (self.chamber_saves.items) |item| {
+                try writer.write(item);
+            }
+            try writer.endArray();
+        }
+
+        try writer.endObject();
+    }
+
+    fn populate(self: *SimulationStateSerializer, simulation: *const Simulation) !void {
+        for (0..simulation.numChambers()) |chamber_idx| {
+            var this_chamber_balls = try simulation.getChamberBalls(self.alloc, chamber_idx);
+            errdefer this_chamber_balls.deinit(self.alloc);
+
+            if (chamber_idx < simulation.chambers.items.len) {
+                // Probably a violation of abstraction?
+                const chamber_save = try simulation.chambers.items[chamber_idx].save(self.alloc);
+                errdefer self.alloc.free(chamber_save);
+                try self.chamber_saves.append(self.alloc, chamber_save);
+            }
+
+            try self.chamber_balls.append(self.alloc, this_chamber_balls);
         }
     }
 };
@@ -562,8 +631,8 @@ fn getResourcePathAlloc(alloc: Allocator, root: []const u8, path: []const u8) ![
 }
 
 const UrlPurpose = union(enum) {
-    simulation_state: usize,
-    reset: usize,
+    simulation_state: void,
+    reset: void,
     get_chamber: usize,
     login_redirect: void,
     login_code: []const u8,
@@ -571,16 +640,11 @@ const UrlPurpose = union(enum) {
     userinfo: void,
     get_resource: void,
     redirect: []const u8,
+    num_chambers: void,
+    chambers_per_row: void,
     chamber_height: void,
-    num_simulations: void,
 
-    const IndexedTargetOption = enum {
-        @"/simulation_state",
-        @"/reset",
-        @"/chamber.wasm",
-    };
-
-    fn parseIndexed(target: []const u8) ?UrlPurpose {
+    fn parseGetChamber(target: []const u8) ?UrlPurpose {
         if (target.len < 1 or target[0] != '/') {
             return null;
         }
@@ -596,21 +660,11 @@ const UrlPurpose = union(enum) {
         };
 
         const remaining = target[end..];
-        const option = std.meta.stringToEnum(IndexedTargetOption, remaining) orelse {
-            return null;
-        };
-
-        switch (option) {
-            .@"/simulation_state" => {
-                return UrlPurpose{ .simulation_state = id };
-            },
-            .@"/reset" => {
-                return UrlPurpose{ .reset = id };
-            },
-            .@"/chamber.wasm" => {
-                return UrlPurpose{ .get_chamber = id };
-            },
+        if (std.mem.eql(u8, remaining, "/chamber.wasm")) {
+            return UrlPurpose{ .get_chamber = id };
         }
+
+        return null;
     }
 
     fn extractCodeFromQueryParams(target: []const u8) ?[]const u8 {
@@ -628,13 +682,16 @@ const UrlPurpose = union(enum) {
         @"/login_redirect",
         @"/upload",
         @"/userinfo",
-        @"/num_simulations",
+        @"/chambers_per_row",
+        @"/num_chambers",
         @"/",
+        @"/reset",
+        @"/simulation_state",
         @"/chamber_height",
     };
 
     fn parse(target: []const u8) !UrlPurpose {
-        if (parseIndexed(target)) |parsed| {
+        if (parseGetChamber(target)) |parsed| {
             return parsed;
         }
 
@@ -649,11 +706,20 @@ const UrlPurpose = union(enum) {
                 .@"/userinfo" => {
                     return UrlPurpose{ .userinfo = {} };
                 },
-                .@"/num_simulations" => {
-                    return UrlPurpose{ .num_simulations = {} };
+                .@"/num_chambers" => {
+                    return UrlPurpose{ .num_chambers = {} };
+                },
+                .@"/chambers_per_row" => {
+                    return UrlPurpose{ .chambers_per_row = {} };
                 },
                 .@"/" => {
                     return UrlPurpose{ .redirect = "/index.html" };
+                },
+                .@"/reset" => {
+                    return UrlPurpose{ .reset = {} };
+                },
+                .@"/simulation_state" => {
+                    return UrlPurpose{ .simulation_state = {} };
                 },
                 .@"/chamber_height" => {
                     return UrlPurpose{ .chamber_height = {} };

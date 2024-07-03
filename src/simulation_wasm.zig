@@ -65,7 +65,11 @@ const chamber = Chamber{
 var simulation: Simulation = undefined;
 
 pub export fn init(seed: usize) void {
-    simulation = Simulation.init(seed, chamber) catch {
+    simulation = Simulation.init(std.heap.wasm_allocator, seed) catch {
+        unreachable;
+    };
+
+    simulation.addChamber(chamber) catch {
         unreachable;
     };
 }
@@ -73,7 +77,9 @@ pub export fn init(seed: usize) void {
 pub export fn step_until(time_s: f32) void {
     const desired_num_steps_taken: u64 = @intFromFloat(time_s / Simulation.step_len_s);
     while (simulation.num_steps_taken < desired_num_steps_taken) {
-        simulation.step();
+        simulation.step() catch {
+            unreachable;
+        };
     }
 }
 

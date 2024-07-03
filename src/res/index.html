@@ -5,11 +5,23 @@
     <link rel="stylesheet" href="/water.css" />
     <script src="/header.js" defer="true"></script>
     <script src="/index.js" type="module"></script>
+    <style>
+      body {
+        margin: 0px;
+      }
+
+      #chambers {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+      }
+    </style>
   </head>
   <body>
     <div>
       <a href="/login_redirect">Log in with twitch</a>
     </div>
     <div id="username"></div>
+    <div id="chambers"></div>
+    <button id="reset">Reset</button>
   </body>
 </html>

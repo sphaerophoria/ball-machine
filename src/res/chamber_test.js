@@ -1,4 +1,4 @@
-import { SimulationRenderer } from "./simulation_renderer.js";
+import { ChamberRenderer } from "./chamber_renderer.js";
 import { makeChamberDirect, makeSimulation } from "./wasm.js";
 
 var simulation_widget = null;
@@ -22,17 +22,13 @@ class LocalSimulation {
     this.chamber = chamber;
     this.simulation = simulation;
 
-    this.canvas = new SimulationRenderer(
+    this.canvas = new ChamberRenderer(
       parent,
       this.simulation.instance.exports.chamberHeight(),
     );
     this.chamber_pixel_len =
       this.canvas.canvas.width * this.canvas.canvas.height * 4;
     this.chamber_pixel_data = chamber.instance.exports.canvasMemory();
-
-    //this.canvas.button.onclick = () => fetch(this.prefix + "/save");
-    this.canvas.reset_button.onclick = () =>
-      this.simulation.instance.exports.reset();
 
     this.start = Date.now();
     this.render();
@@ -46,7 +42,7 @@ class LocalSimulation {
     const elapsed = (Date.now() - this.start) / 1000;
     this.simulation.instance.exports.step_until(elapsed);
 
-    this.canvas.render(getBalls(this.simulation), this.chamber);
+    this.canvas.renderPopulatedChamber(getBalls(this.simulation), this.chamber);
     window.setTimeout(() => this.render(), 16);
   }
 }
@@ -78,6 +74,8 @@ async function init() {
       parent.appendChild(error_div);
     }
   });
+  const reset_button = document.getElementById("reset");
+  reset_button.onclick = () => this.simulation.instance.exports.reset();
 }
 
 window.onload = init;

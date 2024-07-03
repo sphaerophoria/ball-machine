@@ -1,4 +1,4 @@
-export class SimulationRenderer {
+export class ChamberRenderer {
   constructor(parent, chamber_height) {
     const top_div = document.createElement("div");
     const canvas_div = document.createElement("div");
@@ -10,36 +10,24 @@ export class SimulationRenderer {
     this.canvas.width = 600;
     this.canvas.height = this.canvas.width * chamber_height;
 
-    this.reset_button = document.createElement("button");
-    top_div.append(this.reset_button);
-
-    this.reset_button.innerHTML = "Reset";
     parent.appendChild(top_div);
   }
 
-  render(balls, chamber) {
-    var ctx = this.canvas.getContext("2d");
+  getCtx() {
+    return this.canvas.getContext("2d");
+  }
 
-    chamber.instance.exports.render(this.canvas.width, this.canvas.height);
-
-    const canvas_data = new Uint8ClampedArray(
-      chamber.instance.exports.memory.buffer,
-      chamber.instance.exports.canvasMemory(),
-      this.canvas.width * this.canvas.height * 4,
-    );
-
-    const img_data = new ImageData(
-      canvas_data,
-      this.canvas.width,
-      this.canvas.height,
-    );
-    ctx.putImageData(img_data, 0, 0);
-
+  renderBorder() {
+    const ctx = this.getCtx();
     ctx.beginPath();
     ctx.strokeStyle = "black";
     ctx.lineWidth = 0.01 * this.canvas.width;
     ctx.rect(0, 0, this.canvas.width, this.canvas.height);
     ctx.stroke();
+  }
+
+  renderBalls(balls) {
+    const ctx = this.getCtx();
 
     for (var i = 0; i < balls.length; ++i) {
       const ball = balls[i];
@@ -58,5 +46,40 @@ export class SimulationRenderer {
       ctx.fill();
       ctx.stroke();
     }
+  }
+
+  renderChamber(chamber) {
+    const ctx = this.getCtx();
+
+    chamber.instance.exports.render(this.canvas.width, this.canvas.height);
+
+    const canvas_data = new Uint8ClampedArray(
+      chamber.instance.exports.memory.buffer,
+      chamber.instance.exports.canvasMemory(),
+      this.canvas.width * this.canvas.height * 4,
+    );
+
+    const img_data = new ImageData(
+      canvas_data,
+      this.canvas.width,
+      this.canvas.height,
+    );
+    ctx.putImageData(img_data, 0, 0);
+  }
+
+  renderPopulatedChamber(balls, chamber) {
+    this.renderChamber(chamber);
+    this.renderBorder();
+    this.renderBalls(balls);
+  }
+
+  renderEmptyChamber(balls) {
+    const ctx = this.getCtx();
+
+    ctx.fillStyle = "white";
+    ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+
+    this.renderBorder();
+    this.renderBalls(balls);
   }
 }

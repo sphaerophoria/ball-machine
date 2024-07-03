@@ -48,7 +48,7 @@ def wait_for_server():
     start = time.monotonic()
     while start + 60 > time.monotonic():
         try:
-            get("/num_simulations")
+            get("/num_chambers")
             return
         except:
             pass
@@ -62,7 +62,7 @@ def fetch_all_static_resources():
         get("/" + str(p.name))
 
 
-SIM_URLS = ["/reset", "/chamber.wasm", "/simulation_state"]
+SIM_URLS = ["/chamber.wasm"]
 
 
 def fetch_sim_specific_urls(i):
@@ -78,14 +78,14 @@ def fetch_sim_specific_urls_allow_failure(i):
             pass
 
 
-def get_lots_of_simulation_states(i):
+def get_lots_of_simulation_states():
     # Hammer the simulation state a little harder to simulate real life usage
     for _ in range(0, 60):
-        get(f"/{i}/simulation_state")
+        get(f"/simulation_state")
 
 
-def upload_module():
-    wasm_module_path = Path(__file__).parent.parent / "zig-out/bin/simple.wasm"
+def upload_module(name):
+    wasm_module_path = Path(__file__).parent.parent / "zig-out/bin" / name
     with open(wasm_module_path, "rb") as f:
         data = f.read()
         post_wasm_module("/upload", "asdf", data)
@@ -95,22 +95,25 @@ def main():
     wait_for_server()
     fetch_all_static_resources()
 
-    num_sims = int(get("/num_simulations"))
+    num_chambers = int(get("/num_chambers"))
 
-    upload_module()
-    upload_module()
+    upload_module("simple.wasm")
+    upload_module("platforms.wasm")
+    upload_module("plinko.wasm")
+    upload_module("plinko.wasm")
 
-    new_num_sims = int(get("/num_simulations"))
-    if new_num_sims - num_sims != 2:
+    new_num_chambers = int(get("/num_chambers"))
+    if new_num_chambers - num_chambers != 4:
         raise RuntimeError("Upload failure")
 
-    num_sims = new_num_sims
-    for i in range(0, num_sims):
+    num_chambers = new_num_chambers
+    for i in range(0, num_chambers):
         fetch_sim_specific_urls(i)
-        get_lots_of_simulation_states(i)
 
-    fetch_sim_specific_urls_allow_failure(num_sims)
+    fetch_sim_specific_urls_allow_failure(num_chambers)
 
+    get_lots_of_simulation_states()
+    get("/reset")
     get("/userinfo")
 
 

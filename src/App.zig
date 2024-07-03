@@ -7,7 +7,6 @@ const Db = @import("Db.zig");
 
 const ChamberIds = std.ArrayListUnmanaged(i64);
 const ChamberMods = std.ArrayListUnmanaged(*wasm_chamber.WasmChamber);
-const Simulations = std.ArrayListUnmanaged(Simulation);
 
 const App = @This();
 
@@ -15,7 +14,7 @@ alloc: Allocator,
 wasm_loader: wasm_chamber.WasmLoader,
 chamber_ids: ChamberIds,
 chamber_mods: ChamberMods,
-simulations: Simulations,
+simulation: Simulation,
 new_chamber_idx: usize = 0,
 start: std.time.Instant,
 
@@ -37,8 +36,11 @@ fn initEmpty(alloc: Allocator, capacity: usize) !App {
     var chamber_mods = try ChamberMods.initCapacity(alloc, capacity);
     errdefer deinitChamberMods(alloc, &chamber_mods);
 
-    var simulations = try Simulations.initCapacity(alloc, capacity);
-    errdefer simulations.deinit(alloc);
+    var seed: usize = undefined;
+    try std.posix.getrandom(std.mem.asBytes(&seed));
+
+    var simulation = try Simulation.init(alloc, seed);
+    errdefer simulation.deinit();
 
     var chamber_ids = try ChamberIds.initCapacity(alloc, capacity);
     errdefer chamber_ids.deinit(alloc);
@@ -48,7 +50,7 @@ fn initEmpty(alloc: Allocator, capacity: usize) !App {
         .wasm_loader = wasm_loader,
         .chamber_ids = chamber_ids,
         .chamber_mods = chamber_mods,
-        .simulations = simulations,
+        .simulation = simulation,
         .start = try std.time.Instant.now(),
     };
 }
@@ -56,7 +58,7 @@ fn initEmpty(alloc: Allocator, capacity: usize) !App {
 pub fn deinit(self: *App) void {
     self.chamber_ids.deinit(self.alloc);
     deinitChamberMods(self.alloc, &self.chamber_mods);
-    self.simulations.deinit(self.alloc);
+    self.simulation.deinit();
     self.wasm_loader.deinit();
 }
 
@@ -66,10 +68,8 @@ pub fn step(self: *App) !void {
 
     const desired_num_steps_taken = elapsed_time_ns / Simulation.step_len_ns;
 
-    for (self.simulations.items) |*ctx| {
-        while (ctx.num_steps_taken < desired_num_steps_taken) {
-            ctx.step();
-        }
+    while (self.simulation.num_steps_taken < desired_num_steps_taken) {
+        try self.simulation.step();
     }
 }
 
@@ -79,23 +79,20 @@ pub fn appendChamber(self: *App, db_id: i64, data: []const u8) !void {
     chamber.* = try self.wasm_loader.load(self.alloc, data);
     errdefer chamber.deinit();
 
-    var simulation = try initSimulation(chamber.chamber());
-
-    if (self.simulations.items.len > 0) {
-        simulation.num_steps_taken = self.simulations.items[0].num_steps_taken;
-    }
-
     try self.chamber_mods.append(self.alloc, chamber);
     errdefer {
         _ = self.chamber_mods.pop();
     }
 
-    try self.simulations.append(self.alloc, simulation);
+    try self.simulation.addChamber(self.chamber_mods.getLast().chamber());
     errdefer {
-        _ = self.simulations.pop();
+        _ = self.simulation.chambers.pop();
     }
 
     try self.chamber_ids.append(self.alloc, db_id);
+    errdefer {
+        _ = self.chamber_ids.pop();
+    }
 }
 
 fn deinitChamberMods(alloc: Allocator, chambers: *ChamberMods) void {
@@ -116,11 +113,4 @@ fn loadChamber(alloc: Allocator, wasm_loader: *wasm_chamber.WasmLoader, path: []
     errdefer chamber.deinit();
 
     return chamber;
-}
-
-fn initSimulation(mod: Chamber) !Simulation {
-    var seed: usize = undefined;
-    try std.posix.getrandom(std.mem.asBytes(&seed));
-
-    return try Simulation.init(seed, mod);
 }
