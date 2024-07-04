@@ -16,7 +16,6 @@ pub const step_len_s: f32 = @as(f32, @floatFromInt(step_len_ns)) / 1_000_000_000
 
 const ball_radius = 0.025;
 
-mutex: std.Thread.Mutex,
 balls: [num_balls]Ball,
 prng: std.rand.DefaultPrng,
 chamber_mod: Chamber,
@@ -27,7 +26,6 @@ pub fn init(seed: usize, chamber_mod: Chamber) !Simulation {
     const balls = makeBalls(&prng);
     try chamber_mod.initChamber(num_balls);
     return .{
-        .mutex = std.Thread.Mutex{},
         .num_steps_taken = 0,
         .prng = prng,
         .balls = balls,
@@ -36,9 +34,6 @@ pub fn init(seed: usize, chamber_mod: Chamber) !Simulation {
 }
 
 pub fn step(self: *Simulation) void {
-    self.mutex.lock();
-    defer self.mutex.unlock();
-
     self.num_steps_taken += 1;
 
     for (0..self.balls.len) |i| {

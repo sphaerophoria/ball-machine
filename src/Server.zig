@@ -236,9 +236,6 @@ const Connection = struct {
                 defer self.server.alloc.free(chamber_save);
 
                 const response_content = blk: {
-                    simulation.mutex.lock();
-                    defer simulation.mutex.unlock();
-
                     chamber_save = try simulation.chamber_mod.save(self.server.alloc);
 
                     break :blk ResponseJson{
@@ -263,8 +260,6 @@ const Connection = struct {
             },
             .reset => |id| {
                 const simulation = try self.getSimulation(id);
-                simulation.mutex.lock();
-                defer simulation.mutex.unlock();
                 simulation.reset();
                 const response_header = http.Header{
                     .status = .ok,

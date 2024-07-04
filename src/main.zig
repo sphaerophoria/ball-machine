@@ -7,6 +7,7 @@ const Server = @import("Server.zig");
 const EventLoop = @import("EventLoop.zig");
 const App = @import("App.zig");
 const Db = @import("Db.zig");
+const TimerEvent = @import("TimerEvent.zig");
 
 const Args = struct {
     alloc: Allocator,
@@ -179,6 +180,51 @@ const SignalHandler = struct {
     }
 };
 
+const AppRunner = struct {
+    inner: TimerEvent,
+    app: *App,
+
+    fn init(app: *App) !AppRunner {
+        var inner = try TimerEvent.init();
+        try inner.setInterval(1_666_666);
+        return .{
+            .inner = inner,
+            .app = app,
+        };
+    }
+
+    fn deinit(self: *AppRunner) void {
+        self.inner.deinit();
+    }
+
+    fn handler(self: *AppRunner) EventLoop.EventHandler {
+        _ = self.poll();
+        return .{
+            .data = self,
+            .callback = EventLoop.EventHandler.makeCallback(AppRunner, poll),
+            .deinit = null,
+        };
+    }
+
+    fn poll(self: *AppRunner) EventLoop.HandlerAction {
+        const num_triggers = self.inner.poll() catch {
+            std.log.err("Timer failed", .{});
+            return .server_shutdown;
+        };
+
+        if (num_triggers == 0) {
+            return .none;
+        }
+
+        self.app.step() catch {
+            std.log.err("App failed", .{});
+            return .server_shutdown;
+        };
+
+        return .none;
+    }
+};
+
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer {
@@ -206,16 +252,15 @@ pub fn main() !void {
     var app = try App.init(alloc, db_chambers.items);
     defer app.deinit();
 
-    const thread = try std.Thread.spawn(.{}, App.run, .{&app});
-    defer {
-        app.shutdown.store(true, .unordered);
-        thread.join();
-    }
-
     var event_loop = try EventLoop.init(alloc);
     defer event_loop.deinit();
 
     try event_loop.register(signal_handler.fd, signal_handler.handler());
+
+    var app_runner = try AppRunner.init(&app);
+    defer app_runner.deinit();
+
+    try event_loop.register(app_runner.inner.fd, app_runner.handler());
 
     const twitch_jwk =
         \\{"keys":[{"alg":"RS256","e":"AQAB","kid":"1","kty":"RSA","n":"6lq9MQ-q6hcxr7kOUp-tHlHtdcDsVLwVIw13iXUCvuDOeCi0VSuxCCUY6UmMjy53dX00ih2E4Y4UvlrmmurK0eG26b-HMNNAvCGsVXHU3RcRhVoHDaOwHwU72j7bpHn9XbP3Q3jebX6KIfNbei2MiR0Wyb8RZHE-aZhRYO8_-k9G2GycTpvc-2GBsP8VHLUKKfAs2B6sW3q3ymU6M0L-cFXkZ9fHkn9ejs-sqZPhMJxtBPBxoUIUQFTgv4VXTSv914f_YkNw-EjuwbgwXMvpyr06EyfImxHoxsZkFYB-qBYHtaMxTnFsZBr6fn8Ha2JqT1hoP7Z5r5wxDu3GQhKkHw","use":"sig"}]}

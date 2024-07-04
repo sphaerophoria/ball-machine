@@ -12,13 +12,12 @@ const Simulations = std.ArrayListUnmanaged(Simulation);
 const App = @This();
 
 alloc: Allocator,
-mutex: std.Thread.Mutex = .{},
 wasm_loader: wasm_chamber.WasmLoader,
 chamber_ids: ChamberIds,
 chamber_mods: ChamberMods,
 simulations: Simulations,
-shutdown: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
 new_chamber_idx: usize = 0,
+start: std.time.Instant,
 
 pub fn init(alloc: Allocator, chambers: []const Db.Chamber) !App {
     var ret = try initEmpty(alloc, chambers.len);
@@ -50,6 +49,7 @@ fn initEmpty(alloc: Allocator, capacity: usize) !App {
         .chamber_ids = chamber_ids,
         .chamber_mods = chamber_mods,
         .simulations = simulations,
+        .start = try std.time.Instant.now(),
     };
 }
 
@@ -60,34 +60,20 @@ pub fn deinit(self: *App) void {
     self.wasm_loader.deinit();
 }
 
-pub fn run(self: *App) !void {
-    const start = try std.time.Instant.now();
+pub fn step(self: *App) !void {
+    const now = try std.time.Instant.now();
+    const elapsed_time_ns = now.since(self.start);
 
-    const initial_step = if (self.simulations.items.len > 0) self.simulations.items[0].num_steps_taken else 0;
+    const desired_num_steps_taken = elapsed_time_ns / Simulation.step_len_ns;
 
-    while (!self.shutdown.load(.unordered)) {
-        std.time.sleep(1_666_666);
-
-        const now = try std.time.Instant.now();
-        const elapsed_time_ns = now.since(start);
-
-        const desired_num_steps_taken = initial_step + elapsed_time_ns / Simulation.step_len_ns;
-
-        self.mutex.lock();
-        defer self.mutex.unlock();
-
-        for (self.simulations.items) |*ctx| {
-            while (ctx.num_steps_taken < desired_num_steps_taken) {
-                ctx.step();
-            }
+    for (self.simulations.items) |*ctx| {
+        while (ctx.num_steps_taken < desired_num_steps_taken) {
+            ctx.step();
         }
     }
 }
 
 pub fn appendChamber(self: *App, db_id: i64, data: []const u8) !void {
-    self.mutex.lock();
-    defer self.mutex.unlock();
-
     const chamber = try self.alloc.create(wasm_chamber.WasmChamber);
     errdefer self.alloc.destroy(chamber);
     chamber.* = try self.wasm_loader.load(self.alloc, data);
