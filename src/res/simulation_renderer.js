@@ -10,16 +10,8 @@ export class SimulationRenderer {
     this.canvas.width = 600;
     this.canvas.height = 450;
 
-    const button_div = document.createElement("div");
-    top_div.append(button_div);
-
-    this.button = document.createElement("button");
-    button_div.append(this.button);
-
-    this.button.innerHTML = "Save history";
-
     this.reset_button = document.createElement("button");
-    button_div.append(this.reset_button);
+    top_div.append(this.reset_button);
 
     this.reset_button.innerHTML = "Reset";
     parent.appendChild(top_div);

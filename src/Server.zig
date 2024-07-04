@@ -250,20 +250,6 @@ const Connection = struct {
                 };
                 return try http.Writer.init(self.server.alloc, response_header, response_body, true);
             },
-            .save => |id| {
-                const simulation = try self.getSimulation(id);
-                simulation.mutex.lock();
-                defer simulation.mutex.unlock();
-
-                const db_id = self.server.app.chamber_ids.items[id];
-                try simulation.history.save(db_id, "history.json");
-                const response_header = http.Header{
-                    .status = .ok,
-                    .content_type = .@"application/json",
-                    .content_length = 0,
-                };
-                return try http.Writer.init(self.server.alloc, response_header, "", false);
-            },
             .reset => |id| {
                 const simulation = try self.getSimulation(id);
                 simulation.mutex.lock();
@@ -571,7 +557,6 @@ fn getResourcePathAlloc(alloc: Allocator, root: []const u8, path: []const u8) ![
 
 const UrlPurpose = union(enum) {
     simulation_state: usize,
-    save: usize,
     reset: usize,
     get_chamber: usize,
     login_redirect: void,
@@ -584,7 +569,6 @@ const UrlPurpose = union(enum) {
 
     const IndexedTargetOption = enum {
         @"/simulation_state",
-        @"/save",
         @"/reset",
         @"/chamber.wasm",
     };
@@ -612,9 +596,6 @@ const UrlPurpose = union(enum) {
         switch (option) {
             .@"/simulation_state" => {
                 return UrlPurpose{ .simulation_state = id };
-            },
-            .@"/save" => {
-                return UrlPurpose{ .save = id };
             },
             .@"/reset" => {
                 return UrlPurpose{ .reset = id };

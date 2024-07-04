@@ -65,7 +65,7 @@ const chamber = Chamber{
 var simulation: Simulation = undefined;
 
 pub export fn init(seed: usize) void {
-    simulation = Simulation.init(std.heap.wasm_allocator, seed, chamber) catch {
+    simulation = Simulation.init(seed, chamber) catch {
         unreachable;
     };
 }

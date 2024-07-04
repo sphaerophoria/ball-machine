@@ -12,8 +12,6 @@ const Args = struct {
     alloc: Allocator,
     www_root: ?[]const u8,
     port: u16,
-    history_file: ?[]const u8,
-    history_start_idx: usize,
     client_id: []const u8,
     client_secret: []const u8,
     db: []const u8,
@@ -22,7 +20,6 @@ const Args = struct {
     const Option = enum {
         @"--www-root",
         @"--port",
-        @"--load",
         @"--client-id",
         @"--client-secret",
         @"--db",
@@ -35,8 +32,6 @@ const Args = struct {
 
         var www_root: ?[]const u8 = null;
         var port: ?u16 = null;
-        var history_file: ?[]const u8 = null;
-        var history_start_idx: usize = 0;
         var client_id: ?[]const u8 = null;
         var client_secret: ?[]const u8 = null;
         var db: ?[]const u8 = null;
@@ -49,22 +44,6 @@ const Args = struct {
             switch (option) {
                 .@"--www-root" => {
                     www_root = it.next();
-                },
-                .@"--load" => {
-                    history_file = it.next() orelse {
-                        print("--load provided with no history file\n", .{});
-                        help(process_name);
-                    };
-
-                    const history_start_idx_s = it.next() orelse {
-                        print("--load provided with no history idx\n", .{});
-                        help(process_name);
-                    };
-
-                    history_start_idx = std.fmt.parseInt(usize, history_start_idx_s, 10) catch {
-                        print("history start index is not a valid usize\n", .{});
-                        help(process_name);
-                    };
                 },
                 .@"--port" => {
                     const port_s = it.next() orelse {
@@ -107,8 +86,6 @@ const Args = struct {
                 print("--port not provied\n", .{});
                 help(process_name);
             },
-            .history_file = history_file,
-            .history_start_idx = history_start_idx,
             .client_id = client_id orelse {
                 print("--client-id not provided\n", .{});
                 help(process_name);
@@ -143,9 +120,6 @@ const Args = struct {
             switch (option_val) {
                 .@"--www-root" => {
                     print("Optional, where to serve html from", .{});
-                },
-                .@"--load" => {
-                    print("Optional (--load history.json idx), history file + index of where to start simulation", .{});
                 },
                 .@"--port" => {
                     print("Which port to run the webserver on", .{});
@@ -205,14 +179,6 @@ const SignalHandler = struct {
     }
 };
 
-fn initAppFromArgs(alloc: Allocator, args: Args, chambers: []const Db.Chamber) !App {
-    if (args.history_file) |history_file| {
-        return App.initFromHistory(alloc, history_file, args.history_start_idx, chambers);
-    } else {
-        return App.init(alloc, chambers);
-    }
-}
-
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer {
@@ -237,7 +203,7 @@ pub fn main() !void {
     var db_chambers = try db.getChambers(alloc);
     defer db_chambers.deinit(alloc);
 
-    var app = try initAppFromArgs(alloc, args, db_chambers.items);
+    var app = try App.init(alloc, db_chambers.items);
     defer app.deinit();
 
     const thread = try std.Thread.spawn(.{}, App.run, .{&app});

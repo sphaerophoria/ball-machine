@@ -62,7 +62,7 @@ def fetch_all_static_resources():
         get("/" + str(p.name))
 
 
-SIM_URLS = ["/save", "/reset", "/chamber.wasm", "/simulation_state"]
+SIM_URLS = ["/reset", "/chamber.wasm", "/simulation_state"]
 
 
 def fetch_sim_specific_urls(i):

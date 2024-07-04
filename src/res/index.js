@@ -24,7 +24,6 @@ class RemoteSimulation {
     this.chamber_pixel_data = chamber.instance.exports.canvasMemory();
     this.prefix = "/" + id;
 
-    this.canvas.button.onclick = () => fetch(this.prefix + "/save");
     this.canvas.reset_button.onclick = () => fetch(this.prefix + "/reset");
 
     this.render();

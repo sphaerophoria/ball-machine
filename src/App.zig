@@ -31,33 +31,6 @@ pub fn init(alloc: Allocator, chambers: []const Db.Chamber) !App {
     return ret;
 }
 
-pub fn initFromHistory(alloc: Allocator, history_path: []const u8, history_start_idx: usize, chambers: []const Db.Chamber) !App {
-    var ret = try initEmpty(alloc, chambers.len);
-    errdefer ret.deinit();
-
-    const f = try std.fs.cwd().openFile(history_path, .{});
-    var json_reader = std.json.reader(alloc, f.reader());
-    defer json_reader.deinit();
-
-    const parsed = try std.json.parseFromTokenSource(Simulation.SimulationSave, alloc, &json_reader, .{});
-    defer parsed.deinit();
-
-    if (history_start_idx >= parsed.value.steps.len) {
-        return error.InvalidStartIdx;
-    }
-
-    for (chambers) |db_chamber| {
-        try ret.appendChamber(db_chamber.id, db_chamber.data);
-        const added_simulation = &ret.simulations.items[ret.simulations.items.len - 1];
-        added_simulation.num_steps_taken = parsed.value.steps[history_start_idx].num_steps_taken;
-        if (parsed.value.chamber_id == db_chamber.id) {
-            try added_simulation.loadSnapshot(parsed.value.steps[history_start_idx]);
-        }
-    }
-
-    return ret;
-}
-
 fn initEmpty(alloc: Allocator, capacity: usize) !App {
     var wasm_loader = try wasm_chamber.WasmLoader.init();
     errdefer wasm_loader.deinit();
@@ -66,7 +39,7 @@ fn initEmpty(alloc: Allocator, capacity: usize) !App {
     errdefer deinitChamberMods(alloc, &chamber_mods);
 
     var simulations = try Simulations.initCapacity(alloc, capacity);
-    errdefer deinitSimulations(alloc, &simulations);
+    errdefer simulations.deinit(alloc);
 
     var chamber_ids = try ChamberIds.initCapacity(alloc, capacity);
     errdefer chamber_ids.deinit(alloc);
@@ -83,7 +56,7 @@ fn initEmpty(alloc: Allocator, capacity: usize) !App {
 pub fn deinit(self: *App) void {
     self.chamber_ids.deinit(self.alloc);
     deinitChamberMods(self.alloc, &self.chamber_mods);
-    deinitSimulations(self.alloc, &self.simulations);
+    self.simulations.deinit(self.alloc);
     self.wasm_loader.deinit();
 }
 
@@ -120,8 +93,7 @@ pub fn appendChamber(self: *App, db_id: i64, data: []const u8) !void {
     chamber.* = try self.wasm_loader.load(self.alloc, data);
     errdefer chamber.deinit();
 
-    var simulation = try initSimulation(self.alloc, chamber.chamber());
-    errdefer simulation.deinit();
+    var simulation = try initSimulation(chamber.chamber());
 
     if (self.simulations.items.len > 0) {
         simulation.num_steps_taken = self.simulations.items[0].num_steps_taken;
@@ -138,13 +110,6 @@ pub fn appendChamber(self: *App, db_id: i64, data: []const u8) !void {
     }
 
     try self.chamber_ids.append(self.alloc, db_id);
-}
-
-fn deinitSimulations(alloc: Allocator, simulations: *Simulations) void {
-    for (simulations.items) |*simulation| {
-        simulation.deinit();
-    }
-    simulations.deinit(alloc);
 }
 
 fn deinitChamberMods(alloc: Allocator, chambers: *ChamberMods) void {
@@ -167,9 +132,9 @@ fn loadChamber(alloc: Allocator, wasm_loader: *wasm_chamber.WasmLoader, path: []
     return chamber;
 }
 
-fn initSimulation(alloc: Allocator, mod: Chamber) !Simulation {
+fn initSimulation(mod: Chamber) !Simulation {
     var seed: usize = undefined;
     try std.posix.getrandom(std.mem.asBytes(&seed));
 
-    return try Simulation.init(alloc, seed, mod);
+    return try Simulation.init(seed, mod);
 }
