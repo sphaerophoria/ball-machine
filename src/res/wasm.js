@@ -66,7 +66,7 @@ export async function makeSimulation(chamber) {
     env: {
       initChamber: callbacks.initChamber.bind(callbacks),
       stepChamber: callbacks.stepChamber.bind(callbacks),
-      logWasm: logWasm.bind(callbacks.simulation),
+      logWasm: (...args) => logWasm(callbacks.simulation, ...args),
     },
   };
 
