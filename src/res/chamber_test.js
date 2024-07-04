@@ -49,8 +49,8 @@ class LocalSimulation {
 }
 
 async function init() {
-  window.ondrop = async (ev) => {
-    ev.preventDefault();
+  let wasm_input = document.getElementById("wasm_input");
+  wasm_input.addEventListener("change", async (ev) => {
     const parent = document.getElementById("demo");
     parent.innerHTML = "";
 
@@ -63,7 +63,7 @@ async function init() {
         simulation_widget.shutdown = true;
       }
 
-      const buffer = await ev.dataTransfer.files[0].arrayBuffer();
+      const buffer = await ev.target.files[0].arrayBuffer();
       const chamber = await makeChamberDirect(buffer);
       const simulation = await makeSimulation(chamber);
       simulation.instance.exports.init();
@@ -74,11 +74,7 @@ async function init() {
       error_div.innerHTML = e;
       parent.appendChild(error_div);
     }
-  };
-
-  window.ondragover = (ev) => {
-    ev.preventDefault();
-  };
+  });
 }
 
 window.onload = init;
