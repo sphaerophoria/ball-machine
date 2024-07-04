@@ -50,15 +50,13 @@ export class SimulationRenderer {
       const ball_r_px = ball.r * this.canvas.width;
 
       ctx.beginPath();
-      if (i % 2 == 0) {
-        ctx.fillStyle = "red";
-      } else {
-        ctx.fillStyle = "blue";
-      }
+      ctx.fillStyle = "red";
+      ctx.lineWidth = 0.005 * this.canvas.width;
 
       ctx.arc(ball_x_px, ball_y_px, ball_r_px, 0, 2 * Math.PI);
       ctx.closePath();
       ctx.fill();
+      ctx.stroke();
     }
   }
 }
