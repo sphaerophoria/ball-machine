@@ -211,7 +211,20 @@ const Connection = struct {
                 return try generateSingleNumberResponse(self.server.alloc, Simulation.chamber_height);
             },
             .chambers_per_row => {
-                return try generateSingleNumberResponse(self.server.alloc, Simulation.chambers_per_row);
+                return try generateSingleNumberResponse(self.server.alloc, self.server.app.simulation.chambers_per_row);
+            },
+            .set_chambers_per_row => {
+                const chambers_per_row = try std.fmt.parseInt(usize, reader.buf.items, 10);
+                if (chambers_per_row < 1) {
+                    return error.Invalid;
+                }
+                self.server.app.simulation.setChambersPerRow(chambers_per_row);
+                const response_header = http.Header{
+                    .status = .ok,
+                    .content_type = .@"application/json",
+                    .content_length = 0,
+                };
+                return try http.Writer.init(self.server.alloc, response_header, "", false);
             },
             .num_balls => {
                 return try generateSingleNumberResponse(self.server.alloc, self.server.app.simulation.balls.items.len);
@@ -636,6 +649,7 @@ const UrlPurpose = union(enum) {
     redirect: []const u8,
     num_chambers: void,
     chambers_per_row: void,
+    set_chambers_per_row: void,
     num_balls: void,
     set_num_balls: void,
     chamber_height: void,
@@ -707,7 +721,13 @@ const UrlPurpose = union(enum) {
                     return UrlPurpose{ .num_chambers = {} };
                 },
                 .@"/chambers_per_row" => {
-                    return UrlPurpose{ .chambers_per_row = {} };
+                    if (method == .GET) {
+                        return UrlPurpose{ .chambers_per_row = {} };
+                    } else if (method == .PUT) {
+                        return UrlPurpose{ .set_chambers_per_row = {} };
+                    } else {
+                        return error.InvalidMethod;
+                    }
                 },
                 .@"/num_balls" => {
                     if (method == .GET) {

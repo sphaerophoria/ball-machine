@@ -14,7 +14,6 @@ pub const default_num_balls = 5;
 pub const max_num_balls = 100;
 pub const step_len_ns = 1_666_666;
 pub const step_len_s: f32 = @as(f32, @floatFromInt(step_len_ns)) / 1_000_000_000;
-pub const chambers_per_row = if (builtin.target.isWasm()) 1 else 2;
 
 const ball_radius = 0.025;
 
@@ -23,6 +22,7 @@ balls: std.ArrayListUnmanaged(Ball),
 ball_chambers: std.ArrayListUnmanaged(usize),
 prng: std.rand.DefaultPrng,
 chambers: std.ArrayListUnmanaged(Chamber) = .{},
+chambers_per_row: usize = 2,
 num_steps_taken: u64,
 
 pub fn init(alloc: Allocator, seed: usize) !Simulation {
@@ -165,13 +165,18 @@ pub fn reset(self: *Simulation) void {
 
 pub fn numChambers(self: *const Simulation) usize {
     const num_chambers = self.chambers.items.len;
-    const col_idx = (num_chambers % chambers_per_row);
-    const remaining_cols_in_row = chambers_per_row - col_idx;
-    return num_chambers + (remaining_cols_in_row % chambers_per_row);
+    const col_idx = (num_chambers % self.chambers_per_row);
+    const remaining_cols_in_row = self.chambers_per_row - col_idx;
+    return num_chambers + (remaining_cols_in_row % self.chambers_per_row);
+}
+
+pub fn setChambersPerRow(self: *Simulation, num_chambers: usize) void {
+    self.chambers_per_row = num_chambers;
 }
 
 fn chamberLayout(self: Simulation) ChamberLayout {
     return .{
+        .chambers_per_row = self.chambers_per_row,
         .num_chambers = self.numChambers(),
     };
 }
@@ -309,19 +314,20 @@ fn getUnadjustedBall(adjusted_ball: Ball, direction: SourceDirection) Ball {
 }
 
 const ChamberLayout = struct {
+    chambers_per_row: usize,
     num_chambers: usize,
 
     pub fn left(self: ChamberLayout, id: usize) usize {
-        if (id % chambers_per_row == 0) {
-            return (id + chambers_per_row - 1) % self.num_chambers;
+        if (id % self.chambers_per_row == 0) {
+            return (id + self.chambers_per_row - 1) % self.num_chambers;
         } else {
             return id - 1;
         }
     }
 
     pub fn right(self: ChamberLayout, id: usize) usize {
-        if ((id + 1) % chambers_per_row == 0) {
-            return (id + 1 - chambers_per_row) % self.num_chambers;
+        if ((id + 1) % self.chambers_per_row == 0) {
+            return (id + 1 - self.chambers_per_row) % self.num_chambers;
         } else {
             return (id + 1) % self.num_chambers;
         }
@@ -329,15 +335,15 @@ const ChamberLayout = struct {
 
     pub fn up(self: ChamberLayout, id: usize) usize {
         // assume num_chambers % chambers_per_row == 0
-        if (id < chambers_per_row) {
-            const tmp = id + @max(self.num_chambers, chambers_per_row);
-            return tmp - chambers_per_row;
+        if (id < self.chambers_per_row) {
+            const tmp = id + @max(self.num_chambers, self.chambers_per_row);
+            return tmp - self.chambers_per_row;
         }
-        return id - chambers_per_row;
+        return id - self.chambers_per_row;
     }
 
     pub fn down(self: ChamberLayout, id: usize) usize {
-        return (id + chambers_per_row) % self.num_chambers;
+        return (id + self.chambers_per_row) % self.num_chambers;
     }
 };
 

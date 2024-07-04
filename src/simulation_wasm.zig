@@ -72,6 +72,8 @@ pub export fn init(seed: usize) void {
         unreachable;
     };
 
+    simulation.chambers_per_row = 1;
+
     simulation.addChamber(chamber) catch {
         unreachable;
     };

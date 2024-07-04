@@ -11,8 +11,9 @@
       }
 
       #chambers {
+        --num-columns: 1;
         display: grid;
-        grid-template-columns: 1fr 1fr;
+        grid-template-columns: repeat(var(--num-columns), 1fr);
       }
     </style>
   </head>
@@ -23,6 +24,8 @@
     <div id="username"></div>
     <button id="reset">Reset</button>
     <div>
+      <label for="chambers_per_row">Chambers per row</label>
+      <input id="chambers_per_row" type="number" />
       <label for="num_balls">Num balls</label>
       <input id="num_balls" type="number" />
     </div>

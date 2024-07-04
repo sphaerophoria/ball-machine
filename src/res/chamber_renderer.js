@@ -1,16 +1,10 @@
 export class ChamberRenderer {
   constructor(parent, chamber_height) {
-    const top_div = document.createElement("div");
-    const canvas_div = document.createElement("div");
-    top_div.append(canvas_div);
-
     this.canvas = document.createElement("canvas");
-    canvas_div.appendChild(this.canvas);
+    parent.appendChild(this.canvas);
 
     this.canvas.width = 600;
     this.canvas.height = this.canvas.width * chamber_height;
-
-    parent.appendChild(top_div);
   }
 
   getCtx() {

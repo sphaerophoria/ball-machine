@@ -112,6 +112,18 @@ def test_num_balls():
         raise RuntimeError("Failed to set number of balls")
 
 
+def test_chambers_per_row():
+    initial_chambers_per_row = int(get("/chambers_per_row"))
+
+    test_chambers_per_row = initial_chambers_per_row + 2
+    test_chambers_per_row_data = str(test_chambers_per_row).encode()
+    put("/chambers_per_row", test_chambers_per_row_data)
+
+    new_chambers_per_row = int(get("/chambers_per_row"))
+    if new_chambers_per_row != test_chambers_per_row:
+        raise RuntimeError("Failed to set number of balls")
+
+
 def main():
     wait_for_server()
     fetch_all_static_resources()
@@ -135,11 +147,11 @@ def main():
 
     get_lots_of_simulation_states()
     test_num_balls()
+    test_chambers_per_row()
 
     get("/reset")
     get("/userinfo")
     get("/")
-    get("/chambers_per_row")
     get("/num_chambers")
     get("/chamber_height")
 
