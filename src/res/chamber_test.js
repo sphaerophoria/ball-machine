@@ -22,7 +22,10 @@ class LocalSimulation {
     this.chamber = chamber;
     this.simulation = simulation;
 
-    this.canvas = new SimulationRenderer(parent);
+    this.canvas = new SimulationRenderer(
+      parent,
+      this.simulation.instance.exports.chamberHeight(),
+    );
     this.chamber_pixel_len =
       this.canvas.canvas.width * this.canvas.canvas.height * 4;
     this.chamber_pixel_data = chamber.instance.exports.canvasMemory();

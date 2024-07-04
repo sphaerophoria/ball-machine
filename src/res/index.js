@@ -14,10 +14,10 @@ function loadChamber(chamber, simulation_state) {
 }
 
 class RemoteSimulation {
-  constructor(id, chamber) {
+  constructor(id, chamber, chamber_height) {
     this.chamber = chamber;
 
-    this.canvas = new SimulationRenderer(document.body);
+    this.canvas = new SimulationRenderer(document.body, chamber_height);
     this.chamber_pixel_len =
       this.canvas.canvas.width * this.canvas.canvas.height * 4;
     chamber.instance.exports.init(0, this.chamber_pixel_len);
@@ -44,9 +44,12 @@ async function init() {
   const num_sims_response = await fetch("/num_simulations");
   const num_simulations = await num_sims_response.json();
 
+  const chamber_height_response = await fetch("/chamber_height");
+  const chamber_height = await chamber_height_response.json();
+
   for (let i = 0; i < num_simulations; ++i) {
     const obj = await makeChamber("/" + i + "/chamber.wasm");
-    new RemoteSimulation(i, obj);
+    new RemoteSimulation(i, obj, chamber_height);
   }
 
   const userinfo_response = await fetch("/userinfo");

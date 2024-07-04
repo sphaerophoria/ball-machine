@@ -9,6 +9,7 @@ const Ball = physics.Ball;
 const Surface = physics.Surface;
 const Simulation = @This();
 
+pub const chamber_height = 0.7;
 pub const num_balls = 5;
 pub const step_len_ns = 1_666_666;
 pub const step_len_s: f32 = @as(f32, @floatFromInt(step_len_ns)) / 1_000_000_000;

@@ -1,5 +1,5 @@
 export class SimulationRenderer {
-  constructor(parent) {
+  constructor(parent, chamber_height) {
     const top_div = document.createElement("div");
     const canvas_div = document.createElement("div");
     top_div.append(canvas_div);
@@ -8,7 +8,7 @@ export class SimulationRenderer {
     canvas_div.appendChild(this.canvas);
 
     this.canvas.width = 600;
-    this.canvas.height = 450;
+    this.canvas.height = this.canvas.width * chamber_height;
 
     this.reset_button = document.createElement("button");
     top_div.append(this.reset_button);

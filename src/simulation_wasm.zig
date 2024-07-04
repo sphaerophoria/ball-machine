@@ -92,3 +92,7 @@ pub export fn state() [*]u8 {
 pub export fn reset() void {
     simulation.reset();
 }
+
+pub export fn chamberHeight() f32 {
+    return Simulation.chamber_height;
+}

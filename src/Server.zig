@@ -203,6 +203,17 @@ const Connection = struct {
     fn processRequest(self: *Connection, reader: http.Reader) !?http.Writer {
         const url_purpose = try UrlPurpose.parse(reader.target);
         switch (url_purpose) {
+            .chamber_height => {
+                const chamber_height = try std.fmt.allocPrint(self.server.alloc, "{d}", .{Simulation.chamber_height});
+                errdefer self.server.alloc.free(chamber_height);
+
+                const response_header = http.Header{
+                    .status = .ok,
+                    .content_type = .@"application/json",
+                    .content_length = chamber_height.len,
+                };
+                return try http.Writer.init(self.server.alloc, response_header, chamber_height, true);
+            },
             .num_simulations => {
                 const num_sims_s = try std.fmt.allocPrint(self.server.alloc, "{d}", .{self.server.app.simulations.items.len});
                 errdefer self.server.alloc.free(num_sims_s);
@@ -565,6 +576,7 @@ const UrlPurpose = union(enum) {
     userinfo: void,
     get_resource: void,
     redirect: []const u8,
+    chamber_height: void,
     num_simulations: void,
 
     const IndexedTargetOption = enum {
@@ -623,6 +635,7 @@ const UrlPurpose = union(enum) {
         @"/userinfo",
         @"/num_simulations",
         @"/",
+        @"/chamber_height",
     };
 
     fn parse(target: []const u8) !UrlPurpose {
@@ -646,6 +659,9 @@ const UrlPurpose = union(enum) {
                 },
                 .@"/" => {
                     return UrlPurpose{ .redirect = "/index.html" };
+                },
+                .@"/chamber_height" => {
+                    return UrlPurpose{ .chamber_height = {} };
                 },
             }
         }
