@@ -74,6 +74,7 @@ pub const Reader = struct {
     header_size: usize = 0,
     header_buf: []const u8 = &.{},
     target: []const u8 = &.{},
+    method: std.http.Method = .GET,
     transfer_encoding: std.http.TransferEncoding = undefined,
     content_length: ?u64 = null,
 
@@ -118,6 +119,7 @@ pub const Reader = struct {
         self.header_buf = try old_buf.toOwnedSlice(alloc);
         const header = try std.http.Server.Request.Head.parse(self.header_buf);
         self.target = header.target;
+        self.method = header.method;
         self.transfer_encoding = header.transfer_encoding;
         self.content_length = header.content_length;
 

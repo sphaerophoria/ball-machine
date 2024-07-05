@@ -90,7 +90,7 @@ pub export fn state() [*]u8 {
     var io_writer = std.io.fixedBufferStream(&state_buf);
 
     var json_writer = std.json.writeStream(io_writer.writer(), .{});
-    json_writer.write(simulation.balls) catch {};
+    json_writer.write(simulation.balls.items) catch {};
 
     return &state_buf;
 }
@@ -101,4 +101,12 @@ pub export fn reset() void {
 
 pub export fn chamberHeight() f32 {
     return Simulation.chamber_height;
+}
+
+pub export fn setNumBalls(num_balls: usize) void {
+    simulation.setNumBalls(num_balls) catch unreachable;
+}
+
+pub export fn numBalls() usize {
+    return simulation.balls.items.len;
 }

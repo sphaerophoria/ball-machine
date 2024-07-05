@@ -70,6 +70,19 @@ async function init() {
   const chambers_per_row_response = await fetch("/chambers_per_row");
   const chambers_per_row = await chambers_per_row_response.json();
 
+  const num_balls_response = await fetch("/num_balls");
+  const num_balls = await num_balls_response.json();
+
+  const num_balls_spinner = document.getElementById("num_balls");
+  num_balls_spinner.value = num_balls;
+  num_balls_spinner.onchange = (ev) => {
+    const req = new Request("/num_balls", {
+      method: "PUT",
+      body: ev.target.value.toString(),
+    });
+    fetch(req);
+  };
+
   let i = 0;
   for (; i < num_chambers; ++i) {
     const obj = await makeChamber("/" + i + "/chamber.wasm");

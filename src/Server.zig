@@ -192,41 +192,43 @@ const Connection = struct {
         self.state = .http;
     }
 
+    fn generateSingleNumberResponse(alloc: Allocator, number: anytype) !http.Writer {
+        const stringized = try std.fmt.allocPrint(alloc, "{d}", .{number});
+        errdefer alloc.free(stringized);
+
+        const response_header = http.Header{
+            .status = .ok,
+            .content_type = .@"application/json",
+            .content_length = stringized.len,
+        };
+        return try http.Writer.init(alloc, response_header, stringized, true);
+    }
+
     fn processRequest(self: *Connection, reader: http.Reader) !?http.Writer {
-        const url_purpose = try UrlPurpose.parse(reader.target);
+        const url_purpose = try UrlPurpose.parse(reader.target, reader.method);
         switch (url_purpose) {
             .chamber_height => {
-                const chamber_height = try std.fmt.allocPrint(self.server.alloc, "{d}", .{Simulation.chamber_height});
-                errdefer self.server.alloc.free(chamber_height);
-
-                const response_header = http.Header{
-                    .status = .ok,
-                    .content_type = .@"application/json",
-                    .content_length = chamber_height.len,
-                };
-                return try http.Writer.init(self.server.alloc, response_header, chamber_height, true);
+                return try generateSingleNumberResponse(self.server.alloc, Simulation.chamber_height);
             },
             .chambers_per_row => {
-                const chambers_per_row = try std.fmt.allocPrint(self.server.alloc, "{d}", .{Simulation.chambers_per_row});
-                errdefer self.server.alloc.free(chambers_per_row);
+                return try generateSingleNumberResponse(self.server.alloc, Simulation.chambers_per_row);
+            },
+            .num_balls => {
+                return try generateSingleNumberResponse(self.server.alloc, self.server.app.simulation.balls.items.len);
+            },
+            .set_num_balls => {
+                const num_balls = try std.fmt.parseInt(usize, reader.buf.items, 10);
 
+                try self.server.app.simulation.setNumBalls(num_balls);
                 const response_header = http.Header{
                     .status = .ok,
                     .content_type = .@"application/json",
-                    .content_length = chambers_per_row.len,
+                    .content_length = 0,
                 };
-                return try http.Writer.init(self.server.alloc, response_header, chambers_per_row, true);
+                return try http.Writer.init(self.server.alloc, response_header, "", false);
             },
             .num_chambers => {
-                const num_sims_s = try std.fmt.allocPrint(self.server.alloc, "{d}", .{self.server.app.simulation.chambers.items.len});
-                errdefer self.server.alloc.free(num_sims_s);
-
-                const response_header = http.Header{
-                    .status = .ok,
-                    .content_type = .@"application/json",
-                    .content_length = num_sims_s.len,
-                };
-                return try http.Writer.init(self.server.alloc, response_header, num_sims_s, true);
+                return try generateSingleNumberResponse(self.server.alloc, self.server.app.simulation.chambers.items.len);
             },
             .simulation_state => {
                 const simulation = &self.server.app.simulation;
@@ -634,6 +636,8 @@ const UrlPurpose = union(enum) {
     redirect: []const u8,
     num_chambers: void,
     chambers_per_row: void,
+    num_balls: void,
+    set_num_balls: void,
     chamber_height: void,
 
     fn parseGetChamber(target: []const u8) ?UrlPurpose {
@@ -676,13 +680,14 @@ const UrlPurpose = union(enum) {
         @"/userinfo",
         @"/chambers_per_row",
         @"/num_chambers",
+        @"/num_balls",
         @"/",
         @"/reset",
         @"/simulation_state",
         @"/chamber_height",
     };
 
-    fn parse(target: []const u8) !UrlPurpose {
+    fn parse(target: []const u8, method: std.http.Method) !UrlPurpose {
         if (parseGetChamber(target)) |parsed| {
             return parsed;
         }
@@ -703,6 +708,15 @@ const UrlPurpose = union(enum) {
                 },
                 .@"/chambers_per_row" => {
                     return UrlPurpose{ .chambers_per_row = {} };
+                },
+                .@"/num_balls" => {
+                    if (method == .GET) {
+                        return UrlPurpose{ .num_balls = {} };
+                    } else if (method == .PUT) {
+                        return UrlPurpose{ .set_num_balls = {} };
+                    } else {
+                        return error.InvalidMethod;
+                    }
                 },
                 .@"/" => {
                     return UrlPurpose{ .redirect = "/index.html" };

@@ -10,7 +10,8 @@ const Surface = physics.Surface;
 const Simulation = @This();
 
 pub const chamber_height = 0.7;
-pub const num_balls = if (builtin.target.isWasm()) 5 else 20;
+pub const default_num_balls = 5;
+pub const max_num_balls = 100;
 pub const step_len_ns = 1_666_666;
 pub const step_len_s: f32 = @as(f32, @floatFromInt(step_len_ns)) / 1_000_000_000;
 pub const chambers_per_row = if (builtin.target.isWasm()) 1 else 2;
@@ -18,27 +19,38 @@ pub const chambers_per_row = if (builtin.target.isWasm()) 1 else 2;
 const ball_radius = 0.025;
 
 alloc: Allocator,
-balls: [num_balls]Ball,
-ball_chambers: [num_balls]usize,
+balls: std.ArrayListUnmanaged(Ball),
+ball_chambers: std.ArrayListUnmanaged(usize),
 prng: std.rand.DefaultPrng,
 chambers: std.ArrayListUnmanaged(Chamber) = .{},
 num_steps_taken: u64,
 
 pub fn init(alloc: Allocator, seed: usize) !Simulation {
     var prng = std.Random.DefaultPrng.init(seed);
-    const balls = makeBalls(&prng);
+
+    var balls = std.ArrayListUnmanaged(Ball){};
+    errdefer balls.deinit(alloc);
+
+    var ball_chambers = std.ArrayListUnmanaged(usize){};
+    errdefer ball_chambers.deinit(alloc);
+
+    try balls.resize(alloc, default_num_balls);
+    try ball_chambers.resize(alloc, default_num_balls);
+    randomizeBalls(&prng, balls.items, ball_chambers.items, 1);
 
     return .{
         .alloc = alloc,
         .num_steps_taken = 0,
         .prng = prng,
         .balls = balls,
-        .ball_chambers = [1]usize{0} ** num_balls,
+        .ball_chambers = ball_chambers,
     };
 }
 
 pub fn deinit(self: *Simulation) void {
     self.chambers.deinit(self.alloc);
+    self.balls.deinit(self.alloc);
+    self.ball_chambers.deinit(self.alloc);
 }
 
 pub fn step(self: *Simulation) !void {
@@ -48,8 +60,8 @@ pub fn step(self: *Simulation) !void {
         return;
     }
 
-    for (0..self.balls.len) |i| {
-        const ball = &self.balls[i];
+    for (0..self.balls.items.len) |i| {
+        const ball = &self.balls.items[i];
         applyGravity(ball, step_len_s);
         clampSpeed(ball);
         applyVelocity(ball, step_len_s);
@@ -81,7 +93,7 @@ pub fn step(self: *Simulation) !void {
 
         for (0..chamber_balls_slice.len) |balls_view_idx| {
             const view = chamber_balls_slice.get(balls_view_idx);
-            self.balls[view.ball_id] = getUnadjustedBall(view.adjusted, view.direction);
+            self.balls.items[view.ball_id] = getUnadjustedBall(view.adjusted, view.direction);
         }
     }
 
@@ -89,7 +101,7 @@ pub fn step(self: *Simulation) !void {
 }
 
 pub fn addChamber(self: *Simulation, chamber: Chamber) !void {
-    try chamber.initChamber(num_balls);
+    try chamber.initChamber(max_num_balls);
     try self.chambers.append(self.alloc, chamber);
 }
 
@@ -99,8 +111,8 @@ pub fn getChamberBalls(self: *const Simulation, alloc: Allocator, chamber_idx: u
 
     const layout = self.chamberLayout();
 
-    for (self.balls, 0..) |ball, ball_idx| {
-        const ball_chamber_id = self.ball_chambers[ball_idx];
+    for (self.balls.items, 0..) |ball, ball_idx| {
+        const ball_chamber_id = self.ball_chambers.items[ball_idx];
 
         const source_chamber = SourceDirection.fromBallAndChamber(ball, ball_chamber_id, chamber_idx, layout);
 
@@ -125,8 +137,30 @@ pub fn getChamberBalls(self: *const Simulation, alloc: Allocator, chamber_idx: u
     return ret;
 }
 
+pub fn setNumBalls(self: *Simulation, num_balls: usize) !void {
+    if (num_balls > max_num_balls) {
+        return error.Invalid;
+    }
+
+    if (num_balls <= self.balls.items.len) {
+        self.balls.shrinkRetainingCapacity(num_balls);
+        self.ball_chambers.shrinkRetainingCapacity(num_balls);
+        return;
+    }
+
+    const initial_len = self.balls.items.len;
+
+    try self.balls.resize(self.alloc, num_balls);
+    errdefer self.balls.shrinkRetainingCapacity(initial_len);
+
+    try self.ball_chambers.resize(self.alloc, num_balls);
+    errdefer self.balls.shrinkRetainingCapacity(initial_len);
+
+    randomizeBalls(&self.prng, self.balls.items[initial_len..], self.ball_chambers.items[initial_len..], self.numChambers());
+}
+
 pub fn reset(self: *Simulation) void {
-    self.balls = makeBalls(&self.prng);
+    randomizeBalls(&self.prng, self.balls.items, self.ball_chambers.items, self.numChambers());
 }
 
 pub fn numChambers(self: *const Simulation) usize {
@@ -163,8 +197,8 @@ fn applyVelocity(ball: *Ball, delta: f32) void {
 
 fn applyWrap(self: *Simulation) void {
     const layout = self.chamberLayout();
-    for (&self.balls, 0..) |*ball, i| {
-        var ball_chamber: usize = self.ball_chambers[i];
+    for (self.balls.items, 0..) |*ball, i| {
+        var ball_chamber: usize = self.ball_chambers.items[i];
 
         while (ball.pos.x > 1.0) {
             ball_chamber = layout.right(ball_chamber);
@@ -185,7 +219,7 @@ fn applyWrap(self: *Simulation) void {
             ball.pos.y -= chamber_height;
         }
 
-        self.ball_chambers[i] = ball_chamber;
+        self.ball_chambers.items[i] = ball_chamber;
     }
 }
 
@@ -307,12 +341,11 @@ const ChamberLayout = struct {
     }
 };
 
-fn makeBalls(rng: *std.Random.DefaultPrng) [num_balls]Ball {
-    var ret: [num_balls]Ball = undefined;
+fn randomizeBalls(rng: *std.Random.DefaultPrng, balls: []Ball, chamber_ids: []usize, num_chambers: usize) void {
     var y: f32 = ball_radius * 4;
-    for (0..num_balls) |i| {
+    for (balls) |*ball| {
         y += ball_radius * 8;
-        ret[i] = .{
+        ball.* = .{
             .pos = .{
                 .x = rng.random().float(f32) * (1.0 - ball_radius * 2) + ball_radius,
                 .y = y,
@@ -324,5 +357,8 @@ fn makeBalls(rng: *std.Random.DefaultPrng) [num_balls]Ball {
             },
         };
     }
-    return ret;
+
+    for (chamber_ids) |*chamber_id| {
+        chamber_id.* = rng.random().intRangeAtMost(usize, 0, num_chambers - 1);
+    }
 }

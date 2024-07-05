@@ -44,6 +44,15 @@ def get(url):
     return response.read()
 
 
+def put(url, data):
+    url = SERVER + url
+    req = urllib.request.Request(
+        url, method="PUT", data=data, headers={"Cookie": cookie}
+    )
+    response = urllib.request.urlopen(req)
+    return response.read()
+
+
 def wait_for_server():
     start = time.monotonic()
     while start + 60 > time.monotonic():
@@ -91,6 +100,18 @@ def upload_module(name):
         post_wasm_module("/upload", "asdf", data)
 
 
+def test_num_balls():
+    initial_num_balls = int(get("/num_balls"))
+
+    test_num_balls = initial_num_balls + 10
+    test_num_balls_data = str(test_num_balls).encode()
+    put("/num_balls", test_num_balls_data)
+
+    new_num_balls = int(get("/num_balls"))
+    if new_num_balls != test_num_balls:
+        raise RuntimeError("Failed to set number of balls")
+
+
 def main():
     wait_for_server()
     fetch_all_static_resources()
@@ -113,6 +134,8 @@ def main():
     fetch_sim_specific_urls_allow_failure(num_chambers)
 
     get_lots_of_simulation_states()
+    test_num_balls()
+
     get("/reset")
     get("/userinfo")
     get("/")
