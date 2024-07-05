@@ -50,6 +50,7 @@ class LocalSimulation {
 async function init() {
   let wasm_input = document.getElementById("wasm_input");
   const num_balls_spinner = document.getElementById("num_balls");
+  const speed_slider = document.getElementById("speed");
 
   wasm_input.addEventListener("change", async (ev) => {
     const parent = document.getElementById("demo");
@@ -69,6 +70,7 @@ async function init() {
       const simulation = await makeSimulation(chamber);
       simulation.instance.exports.init();
       num_balls_spinner.value = simulation.instance.exports.numBalls();
+      speed_slider.value = 100;
 
       simulation_widget = new LocalSimulation(parent, chamber, simulation);
     } catch (e) {
@@ -85,6 +87,12 @@ async function init() {
   const reset_button = document.getElementById("reset");
   reset_button.onclick = () =>
     simulation_widget.simulation.instance.exports.reset();
+
+  speed_slider.onchange = (ev) => {
+    simulation_widget.simulation.instance.exports.setSpeed(
+      ev.target.value / 100.0,
+    );
+  };
 }
 
 window.onload = init;

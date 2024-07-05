@@ -1,5 +1,6 @@
 const std = @import("std");
 const Simulation = @import("Simulation.zig");
+const SimulationScheduler = @import("SimulationScheduler.zig");
 const Allocator = std.mem.Allocator;
 const Chamber = @import("Chamber.zig");
 const physics = @import("physics.zig");
@@ -63,6 +64,8 @@ const chamber = Chamber{
 };
 
 var simulation: Simulation = undefined;
+var scheduler: SimulationScheduler = .{};
+var last_time: f32 = 0.0;
 
 pub export fn init(seed: usize) void {
     simulation = Simulation.init(std.heap.wasm_allocator, seed) catch {
@@ -75,8 +78,8 @@ pub export fn init(seed: usize) void {
 }
 
 pub export fn stepUntil(time_s: f32) void {
-    const desired_num_steps_taken: u64 = @intFromFloat(time_s / Simulation.step_len_s);
-    while (simulation.num_steps_taken < desired_num_steps_taken) {
+    last_time = time_s;
+    while (scheduler.shouldStep(time_s, simulation.num_steps_taken)) {
         simulation.step() catch {
             unreachable;
         };
@@ -109,4 +112,8 @@ pub export fn setNumBalls(num_balls: usize) void {
 
 pub export fn numBalls() usize {
     return simulation.balls.items.len;
+}
+
+pub export fn setSpeed(ratio: f32) void {
+    scheduler.setSpeed(last_time, ratio, simulation.num_steps_taken);
 }
