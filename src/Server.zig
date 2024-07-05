@@ -192,14 +192,6 @@ const Connection = struct {
         self.state = .http;
     }
 
-    fn getSimulation(self: *Connection, id: usize) !*Simulation {
-        if (id >= self.server.app.simulations.items.len) {
-            return error.OutOfBounds;
-        }
-
-        return &self.server.app.simulations.items[id];
-    }
-
     fn processRequest(self: *Connection, reader: http.Reader) !?http.Writer {
         const url_purpose = try UrlPurpose.parse(reader.target);
         switch (url_purpose) {
