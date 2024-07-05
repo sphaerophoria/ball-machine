@@ -115,6 +115,10 @@ def main():
     get_lots_of_simulation_states()
     get("/reset")
     get("/userinfo")
+    get("/")
+    get("/chambers_per_row")
+    get("/num_chambers")
+    get("/chamber_height")
 
 
 if __name__ == "__main__":
