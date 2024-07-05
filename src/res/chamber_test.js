@@ -40,7 +40,7 @@ class LocalSimulation {
     }
 
     const elapsed = (Date.now() - this.start) / 1000;
-    this.simulation.instance.exports.step_until(elapsed);
+    this.simulation.instance.exports.stepUntil(elapsed);
 
     this.canvas.renderPopulatedChamber(getBalls(this.simulation), this.chamber);
     window.setTimeout(() => this.render(), 16);

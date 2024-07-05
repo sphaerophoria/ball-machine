@@ -74,7 +74,7 @@ pub export fn init(seed: usize) void {
     };
 }
 
-pub export fn step_until(time_s: f32) void {
+pub export fn stepUntil(time_s: f32) void {
     const desired_num_steps_taken: u64 = @intFromFloat(time_s / Simulation.step_len_s);
     while (simulation.num_steps_taken < desired_num_steps_taken) {
         simulation.step() catch {
