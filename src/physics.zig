@@ -46,6 +46,11 @@ pub const Vec2 = extern struct {
     x: f32,
     y: f32,
 
+    pub const zero = Vec2{
+        .x = 0,
+        .y = 0,
+    };
+
     pub fn length_2(self: Vec2) f32 {
         return self.x * self.x + self.y * self.y;
     }
@@ -224,8 +229,9 @@ fn pointWithinLineBounds(p: Pos2, a: Pos2, b: Pos2) bool {
     return within_x_bounds or within_y_bounds;
 }
 
-pub fn applyCollision(ball: *Ball, resolution: Vec2, obj_normal: Vec2, delta: f32, elasticity: f32) void {
-    const vel_ground_proj_mag = ball.velocity.dot(obj_normal);
+pub fn applyCollision(ball: *Ball, resolution: Vec2, obj_normal: Vec2, obj_vel: Vec2, delta: f32, elasticity: f32) void {
+    const vel_diff = ball.velocity.sub(obj_vel);
+    const vel_ground_proj_mag = vel_diff.dot(obj_normal);
     var vel_adjustment = obj_normal.mul(-vel_ground_proj_mag);
     vel_adjustment = vel_adjustment.add(vel_adjustment.mul(elasticity));
 

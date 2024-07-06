@@ -109,8 +109,8 @@ pub export fn surface_normal(surface: *const Surface) Vec2 {
     return surface.normal();
 }
 
-pub export fn apply_ball_collision(ball: *Ball, resolution: *const Vec2, obj_normal: *const Vec2, delta: f32, elasticity: f32) void {
-    physics.applyCollision(ball, resolution.*, obj_normal.*, delta, elasticity);
+pub export fn apply_ball_collision(ball: *Ball, resolution: *const Vec2, obj_normal: *const Vec2, obj_velocity: *const Vec2, delta: f32, elasticity: f32) void {
+    physics.applyCollision(ball, resolution.*, obj_normal.*, obj_velocity.*, delta, elasticity);
 }
 
 pub export fn apply_ball_ball_collision(a: *Ball, b: *Ball) void {

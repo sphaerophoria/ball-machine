@@ -129,14 +129,15 @@ def main():
     init_info = get_init_info()
     num_chambers = get_num_chambers(init_info)
 
-    upload_module("simple.wasm")
+    upload_module("spinny_bar.wasm")
     upload_module("platforms.wasm")
-    upload_module("counter.wasm")
     upload_module("plinko.wasm")
+    upload_module("counter.wasm")
+    upload_module("simple.wasm")
 
     init_info = get_init_info()
     new_num_chambers = get_num_chambers(init_info)
-    if new_num_chambers - num_chambers != 4:
+    if new_num_chambers - num_chambers != 5:
         raise RuntimeError("Upload failure")
 
     num_chambers = new_num_chambers

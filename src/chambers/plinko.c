@@ -110,7 +110,12 @@ void step(size_t num_balls, float delta) {
       const struct vec2 normalized_offs = vec2_normalized(&offs);
       const struct vec2 resolution =
           vec2_mul(&normalized_offs, resolution_magnitude);
-      apply_ball_collision(ball, &resolution, &normalized_offs, delta, 0.35);
+      const struct vec2 zero = (struct vec2){
+          .x = 0,
+          .y = 0,
+      };
+      apply_ball_collision(ball, &resolution, &normalized_offs, &zero, delta,
+                           0.35);
     }
   }
 }

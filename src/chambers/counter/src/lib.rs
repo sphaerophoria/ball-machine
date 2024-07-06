@@ -292,8 +292,12 @@ pub fn step(num_balls: usize, delta: f32) {
                 &physics::vec2_mul(&ball.velocity, delta),
                 resolution.as_mut_ptr());
 
+            let zero = physics::vec2 {
+                x: 0.0,
+                y: 0.0,
+            };
             if collided {
-                physics::apply_ball_collision(ball as *mut physics::ball, resolution.assume_init_ref(), &physics::surface_normal(&surface), delta, 0.9);
+                physics::apply_ball_collision(ball as *mut physics::ball, resolution.assume_init_ref(), &physics::surface_normal(&surface), &zero, delta, 0.9);
             }
 
             physics::surface_push_if_colliding(&surface, ball as *mut physics::ball, delta);

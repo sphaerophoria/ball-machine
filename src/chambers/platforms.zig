@@ -129,7 +129,7 @@ pub export fn step(num_balls: usize, delta: f32) void {
             const resolution = obj.collisionResolution(ball_collision_point, ball.velocity.mul(delta));
             if (resolution) |r| {
                 ball.velocity.x += (movement / delta - ball.velocity.x) * 0.3;
-                physics.applyCollision(ball, r, obj_normal, delta, 0.9);
+                physics.applyCollision(ball, r, obj_normal, physics.Vec2.zero, delta, 0.9);
             }
 
             obj.pushIfColliding(ball, delta);

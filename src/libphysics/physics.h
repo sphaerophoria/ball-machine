@@ -38,5 +38,5 @@ struct vec2 vec2_normalized(const struct vec2* v);
 bool surface_collision_resolution(const struct surface* surface, const struct pos2* p, const struct vec2* v, struct vec2* out);
 struct vec2 surface_normal(const struct surface* surface);
 void surface_push_if_colliding(const struct surface* surface, struct ball* ball, float delta);
-void apply_ball_collision(struct ball* ball, const struct vec2* resolution, const struct vec2* obj_normal, float delta, float elasticity);
+void apply_ball_collision(struct ball* ball, const struct vec2* resolution, const struct vec2* obj_normal, const struct vec2* obj_velocity, float delta, float elasticity);
 void apply_ball_ball_collision(struct ball* a, struct ball* b);

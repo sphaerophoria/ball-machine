@@ -62,7 +62,7 @@ pub export fn step(num_balls: usize, delta: f32) void {
 
         const resolution = platform.collisionResolution(ball_collision_point, ball.velocity.mul(delta));
         if (resolution) |r| {
-            physics.applyCollision(ball, r, obj_normal, delta, 0.9);
+            physics.applyCollision(ball, r, obj_normal, physics.Vec2.zero, delta, 0.9);
         }
     }
 }

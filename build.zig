@@ -171,6 +171,7 @@ pub fn build(b: *std.Build) !void {
 
     try buildChamber(b, chambers, "simple", opt);
     try buildChamber(b, chambers, "platforms", opt);
+    try buildChamber(b, chambers, "spinny_bar", opt);
     try buildCChamber(b, chambers, libphysics, opt);
     try buildRustChamber(b, libphysics_install, opt);
     const client_side_sim = try buildClientSideSim(b, opt);
