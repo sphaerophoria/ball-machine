@@ -33,13 +33,14 @@ pub fn init(
     client_id: []const u8,
     client_secret: []const u8,
     jwt_keys: []const userinfo.RsaParams,
+    server_url: []const u8,
     event_loop: *EventLoop,
     db: *Db,
 ) !Server {
     const trimmed_id = std.mem.trim(u8, client_id, &std.ascii.whitespace);
     const trimmed_secret = std.mem.trim(u8, client_secret, &std.ascii.whitespace);
 
-    const auth_request_thread = try AuthRequestThread.init(alloc, trimmed_id, trimmed_secret);
+    const auth_request_thread = try AuthRequestThread.init(alloc, trimmed_id, trimmed_secret, server_url);
     errdefer auth_request_thread.deinit();
 
     const auth_request_handle = try std.Thread.spawn(
@@ -48,7 +49,7 @@ pub fn init(
         .{auth_request_thread},
     );
 
-    const auth = try Authentication.init(alloc, jwt_keys, db);
+    const auth = try Authentication.init(alloc, server_url, jwt_keys, db);
 
     return Server{
         .alloc = alloc,
@@ -803,6 +804,7 @@ const AuthRequestQueue = struct {
 
 const AuthRequestThread = struct {
     alloc: Allocator,
+    server_url: []const u8,
     client: HttpClient,
     shutdown: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
     client_id: []const u8,
@@ -813,6 +815,7 @@ const AuthRequestThread = struct {
         alloc: Allocator,
         client_id: []const u8,
         client_secret: []const u8,
+        server_url: []const u8,
     ) !*AuthRequestThread {
         const ret = try alloc.create(AuthRequestThread);
         errdefer alloc.destroy(ret);
@@ -823,6 +826,7 @@ const AuthRequestThread = struct {
             .client = client,
             .client_id = client_id,
             .client_secret = client_secret,
+            .server_url = server_url,
         };
         return ret;
     }
@@ -846,8 +850,8 @@ const AuthRequestThread = struct {
                     "&client_secret={s}" ++
                     "&code={s}" ++
                     "&grant_type=authorization_code" ++
-                    "&redirect_uri=http://localhost:8000/login_code",
-                .{ self.client_id, self.client_secret, req.code },
+                    "&redirect_uri={s}/login_code",
+                .{ self.client_id, self.client_secret, req.code, self.server_url },
             );
             const url = "https://id.twitch.tv/oauth2/token";
             const response = try self.client.post(self.alloc, url, req_data);

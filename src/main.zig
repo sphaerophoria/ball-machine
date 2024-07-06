@@ -15,6 +15,7 @@ const Args = struct {
     port: u16,
     client_id: []const u8,
     client_secret: []const u8,
+    server_url: []const u8,
     db: []const u8,
     it: std.process.ArgIterator,
 
@@ -24,6 +25,7 @@ const Args = struct {
         @"--client-id",
         @"--client-secret",
         @"--db",
+        @"--server-url",
         @"--help",
     };
 
@@ -35,6 +37,7 @@ const Args = struct {
         var port: ?u16 = null;
         var client_id: ?[]const u8 = null;
         var client_secret: ?[]const u8 = null;
+        var server_url: ?[]const u8 = null;
         var db: ?[]const u8 = null;
 
         while (it.next()) |arg| {
@@ -74,6 +77,12 @@ const Args = struct {
                         help(process_name);
                     };
                 },
+                .@"--server-url" => {
+                    server_url = it.next() orelse {
+                        print("--server-url provided with no argument\n", .{});
+                        help(process_name);
+                    };
+                },
                 .@"--help" => {
                     help(process_name);
                 },
@@ -97,6 +106,10 @@ const Args = struct {
             },
             .db = db orelse {
                 print("--db not provided\n", .{});
+                help(process_name);
+            },
+            .server_url = server_url orelse {
+                print("--server-url not provided", .{});
                 help(process_name);
             },
             .it = it,
@@ -133,6 +146,9 @@ const Args = struct {
                 },
                 .@"--db" => {
                     print("folder where data goes", .{});
+                },
+                .@"--server-url" => {
+                    print("Server url, must match twitch's registered URL, and be correct", .{});
                 },
                 .@"--help" => {
                     print("Show this help", .{});
@@ -276,6 +292,7 @@ pub fn main() !void {
         std.mem.trim(u8, args.client_id, &std.ascii.whitespace),
         std.mem.trim(u8, args.client_secret, &std.ascii.whitespace),
         jwt_keys.items,
+        args.server_url,
         &event_loop,
         &db,
     );

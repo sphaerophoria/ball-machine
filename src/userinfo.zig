@@ -309,10 +309,11 @@ pub const Authentication = struct {
 
     alloc: Allocator,
     jwt_keys: []const RsaParams,
+    server_url: []const u8,
     rng: std.rand.DefaultCsprng,
     db: *Db,
 
-    pub fn init(alloc: Allocator, jwt_keys: []const RsaParams, db: *Db) !Authentication {
+    pub fn init(alloc: Allocator, server_url: []const u8, jwt_keys: []const RsaParams, db: *Db) !Authentication {
         var seed: [std.rand.DefaultCsprng.secret_seed_length]u8 = undefined;
         try std.posix.getrandom(&seed);
         const rng = std.rand.DefaultCsprng.init(seed);
@@ -320,6 +321,7 @@ pub const Authentication = struct {
         return .{
             .alloc = alloc,
             .jwt_keys = jwt_keys,
+            .server_url = server_url,
             .rng = rng,
             .db = db,
         };
@@ -397,10 +399,10 @@ pub const Authentication = struct {
             "https://id.twitch.tv/oauth2/authorize" ++
                 "?response_type=code" ++
                 "&client_id={s}" ++
-                "&redirect_uri=http://localhost:8000/login_code&" ++
+                "&redirect_uri={s}/login_code&" ++
                 "scope=openid&state={s}" ++
                 "&nonce={s}",
-            .{ client_id, base64_encoded, base64_encoded },
+            .{ client_id, self.server_url, base64_encoded, base64_encoded },
         );
 
         var set_cookie_buf: [100]u8 = undefined;
