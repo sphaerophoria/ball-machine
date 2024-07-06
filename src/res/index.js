@@ -51,29 +51,29 @@ class EmptyChamber {
 let relayout_queue = Promise.resolve();
 
 class ChamberRegistry {
-  constructor(parent, num_chambers, chambers_per_row, chamber_height) {
+  constructor(parent, chamber_ids, chambers_per_row, chamber_height) {
     this.parent = parent;
     this.chambers = [];
     this.chamber_height = chamber_height;
-    this.relayout(num_chambers, chambers_per_row);
+    this.relayout(chamber_ids, chambers_per_row);
     this.render();
   }
 
-  async relayout(num_chambers, chambers_per_row) {
+  async relayout(chamber_ids, chambers_per_row) {
     this.parent.innerHTML = "";
     this.chambers = [];
 
     let i = 0;
-    for (; i < num_chambers; ++i) {
-      const obj = await makeChamber("/" + i + "/chamber.wasm");
+    for (; i < chamber_ids.length; ++i) {
+      const obj = await makeChamber("/" + chamber_ids[i] + "/chamber.wasm");
       this.chambers.push(
         new RemoteChamber(this.parent, i, obj, this.chamber_height),
       );
     }
 
     const end_empty_chambers =
-      num_chambers +
-      ((chambers_per_row - (num_chambers % chambers_per_row)) %
+      chamber_ids.length +
+      ((chambers_per_row - (chamber_ids.length % chambers_per_row)) %
         chambers_per_row);
     for (; i < end_empty_chambers; ++i) {
       this.chambers.push(new EmptyChamber(this.parent, i, this.chamber_height));
@@ -93,22 +93,18 @@ class ChamberRegistry {
 
 async function init() {
   // FIXME: Do all requests at same time
-  const num_chambers_resopnse = await fetch("/num_chambers");
-  const num_chambers = await num_chambers_resopnse.json();
+  const init_info_response = await fetch("/init_info");
+  const init_info = await init_info_response.json();
 
-  const chamber_height_response = await fetch("/chamber_height");
-  const chamber_height = await chamber_height_response.json();
-
-  const chambers_per_row_response = await fetch("/chambers_per_row");
-  const chambers_per_row = await chambers_per_row_response.json();
-
-  const num_balls_response = await fetch("/num_balls");
-  const num_balls = await num_balls_response.json();
+  const chamber_height = init_info.chamber_height;
+  const chambers_per_row = init_info.chambers_per_row;
+  const num_balls = init_info.num_balls;
+  const chamber_ids = init_info.chamber_ids;
 
   const chambers_div = document.getElementById("chambers");
   const registry = new ChamberRegistry(
     chambers_div,
-    num_chambers,
+    chamber_ids,
     chambers_per_row,
     chamber_height,
   );
@@ -136,7 +132,7 @@ async function init() {
           body: ev.target.value.toString(),
         });
         await fetch(req);
-        await registry.relayout(num_chambers, ev.target.value);
+        await registry.relayout(chamber_ids, ev.target.value);
         style.style.setProperty("--num-columns", ev.target.value);
       } catch (e) {}
     });

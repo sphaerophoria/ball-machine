@@ -3,6 +3,7 @@ import urllib.request
 import time
 from pathlib import Path
 import uuid
+import json
 
 SERVER = "http://localhost:8000"
 # '1' ** 32 base64url encoded by zig std
@@ -57,7 +58,7 @@ def wait_for_server():
     start = time.monotonic()
     while start + 60 > time.monotonic():
         try:
-            get("/num_chambers")
+            get("/init_info")
             return
         except:
             pass
@@ -71,20 +72,9 @@ def fetch_all_static_resources():
         get("/" + str(p.name))
 
 
-SIM_URLS = ["/chamber.wasm"]
-
-
-def fetch_sim_specific_urls(i):
-    for url in SIM_URLS:
-        get(f"/{i}{url}")
-
-
-def fetch_sim_specific_urls_allow_failure(i):
-    for url in SIM_URLS:
-        try:
-            get(f"/{i}{url}")
-        except:
-            pass
+def fetch_chambers(chamber_ids):
+    for chamber_id in chamber_ids:
+        get(f"/{chamber_id}/chamber.wasm")
 
 
 def get_lots_of_simulation_states():
@@ -101,49 +91,56 @@ def upload_module(name):
 
 
 def test_num_balls():
-    initial_num_balls = int(get("/num_balls"))
+    initial_num_balls = get_init_info()["num_balls"]
 
     test_num_balls = initial_num_balls + 10
     test_num_balls_data = str(test_num_balls).encode()
     put("/num_balls", test_num_balls_data)
 
-    new_num_balls = int(get("/num_balls"))
+    new_num_balls = get_init_info()["num_balls"]
     if new_num_balls != test_num_balls:
         raise RuntimeError("Failed to set number of balls")
 
 
 def test_chambers_per_row():
-    initial_chambers_per_row = int(get("/chambers_per_row"))
+    initial_chambers_per_row = get_init_info()["chambers_per_row"]
 
     test_chambers_per_row = initial_chambers_per_row + 2
     test_chambers_per_row_data = str(test_chambers_per_row).encode()
     put("/chambers_per_row", test_chambers_per_row_data)
 
-    new_chambers_per_row = int(get("/chambers_per_row"))
+    new_chambers_per_row = get_init_info()["chambers_per_row"]
     if new_chambers_per_row != test_chambers_per_row:
         raise RuntimeError("Failed to set number of balls")
+
+
+def get_init_info():
+    return json.loads(get("/init_info"))
+
+
+def get_num_chambers(init_info):
+    return len(init_info["chamber_ids"])
 
 
 def main():
     wait_for_server()
     fetch_all_static_resources()
 
-    num_chambers = int(get("/num_chambers"))
+    init_info = get_init_info()
+    num_chambers = get_num_chambers(init_info)
 
     upload_module("simple.wasm")
     upload_module("platforms.wasm")
     upload_module("counter.wasm")
     upload_module("plinko.wasm")
 
-    new_num_chambers = int(get("/num_chambers"))
+    init_info = get_init_info()
+    new_num_chambers = get_num_chambers(init_info)
     if new_num_chambers - num_chambers != 4:
         raise RuntimeError("Upload failure")
 
     num_chambers = new_num_chambers
-    for i in range(0, num_chambers):
-        fetch_sim_specific_urls(i)
-
-    fetch_sim_specific_urls_allow_failure(num_chambers)
+    fetch_chambers(init_info["chamber_ids"])
 
     get_lots_of_simulation_states()
     test_num_balls()
@@ -152,8 +149,6 @@ def main():
     get("/reset")
     get("/userinfo")
     get("/")
-    get("/num_chambers")
-    get("/chamber_height")
 
 
 if __name__ == "__main__":

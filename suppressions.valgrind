@@ -8,3 +8,8 @@
    Memcheck:Cond
    fun:_ZN10wasmparser6parser6Parser12parse_reader17h642f5f3621289c77E
 }
+{
+   wasmtime_again
+   Memcheck:Cond
+   fun:_ZN10wasmparser6parser6Parser12parse_reader17h07ab36de797b1b8cE
+}

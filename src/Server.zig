@@ -208,11 +208,41 @@ const Connection = struct {
     fn processRequest(self: *Connection, reader: http.Reader) !?http.Writer {
         const url_purpose = try UrlPurpose.parse(reader.target, reader.method);
         switch (url_purpose) {
-            .chamber_height => {
-                return try generateSingleNumberResponse(self.server.alloc, Simulation.chamber_height);
-            },
-            .chambers_per_row => {
-                return try generateSingleNumberResponse(self.server.alloc, self.server.app.simulation.chambers_per_row);
+            .init_info => {
+                const InitInfo = struct {
+                    chamber_height: f32,
+                    chambers_per_row: usize,
+                    num_balls: usize,
+                    chamber_ids: []usize,
+                };
+
+                comptime {
+                    const ChamberId = @typeInfo(@TypeOf(self.server.app.chamber_ids).Slice).Pointer.child;
+                    std.debug.assert(@alignOf(ChamberId) == @alignOf(usize));
+                    std.debug.assert(@sizeOf(ChamberId) == @sizeOf(usize));
+                }
+
+                const init_info = InitInfo{
+                    .chamber_height = Simulation.chamber_height,
+                    .chambers_per_row = self.server.app.simulation.chambers_per_row,
+                    .num_balls = self.server.app.simulation.balls.items.len,
+                    .chamber_ids = std.mem.bytesAsSlice(usize, std.mem.sliceAsBytes(self.server.app.chamber_ids.items)),
+                };
+
+                var out_buf = try std.ArrayList(u8).initCapacity(self.server.alloc, 4096);
+                errdefer out_buf.deinit();
+
+                try std.json.stringify(init_info, .{}, out_buf.writer());
+
+                const response_body = try out_buf.toOwnedSlice();
+                errdefer self.server.alloc.free(response_body);
+
+                const response_header = http.Header{
+                    .status = .ok,
+                    .content_type = .@"application/json",
+                    .content_length = response_body.len,
+                };
+                return try http.Writer.init(self.server.alloc, response_header, response_body, true);
             },
             .set_chambers_per_row => {
                 const chambers_per_row = try std.fmt.parseInt(usize, reader.buf.items, 10);
@@ -227,9 +257,6 @@ const Connection = struct {
                 };
                 return try http.Writer.init(self.server.alloc, response_header, "", false);
             },
-            .num_balls => {
-                return try generateSingleNumberResponse(self.server.alloc, self.server.app.simulation.balls.items.len);
-            },
             .set_num_balls => {
                 const num_balls = try std.fmt.parseInt(usize, reader.buf.items, 10);
 
@@ -240,9 +267,6 @@ const Connection = struct {
                     .content_length = 0,
                 };
                 return try http.Writer.init(self.server.alloc, response_header, "", false);
-            },
-            .num_chambers => {
-                return try generateSingleNumberResponse(self.server.alloc, self.server.app.simulation.chambers.items.len);
             },
             .simulation_state => {
                 const simulation = &self.server.app.simulation;
@@ -276,11 +300,7 @@ const Connection = struct {
                 return try http.Writer.init(self.server.alloc, response_header, "", false);
             },
             .get_chamber => |id| {
-                if (id >= self.server.app.chamber_ids.items.len) {
-                    return error.OutOfBounds;
-                }
-
-                var chamber = try self.server.db.getChamber(self.server.alloc, self.server.app.chamber_ids.items[id]);
+                var chamber = try self.server.db.getChamber(self.server.alloc, Db.ChamberId{ .value = id });
                 defer chamber.deinit(self.server.alloc);
 
                 // Writer object requires either owned or static memory, the
@@ -639,21 +659,18 @@ fn getResourcePathAlloc(alloc: Allocator, root: []const u8, path: []const u8) ![
 }
 
 const UrlPurpose = union(enum) {
+    init_info: void,
     simulation_state: void,
     reset: void,
-    get_chamber: usize,
+    get_chamber: i64,
     login_redirect: void,
     login_code: []const u8,
     upload: void,
     userinfo: void,
     get_resource: void,
     redirect: []const u8,
-    num_chambers: void,
-    chambers_per_row: void,
     set_chambers_per_row: void,
-    num_balls: void,
     set_num_balls: void,
-    chamber_height: void,
 
     fn parseGetChamber(target: []const u8) ?UrlPurpose {
         if (target.len < 1 or target[0] != '/') {
@@ -666,7 +683,7 @@ const UrlPurpose = union(enum) {
         end += 1;
 
         // FIXME: max id check
-        const id = std.fmt.parseInt(usize, target[1..end], 10) catch {
+        const id = std.fmt.parseInt(i64, target[1..end], 10) catch {
             return null;
         };
 
@@ -690,16 +707,15 @@ const UrlPurpose = union(enum) {
     }
 
     const NonIndexedTargetOption = enum {
+        @"/init_info",
         @"/login_redirect",
         @"/upload",
         @"/userinfo",
         @"/chambers_per_row",
-        @"/num_chambers",
         @"/num_balls",
         @"/",
         @"/reset",
         @"/simulation_state",
-        @"/chamber_height",
     };
 
     fn parse(target: []const u8, method: std.http.Method) !UrlPurpose {
@@ -718,22 +734,15 @@ const UrlPurpose = union(enum) {
                 .@"/userinfo" => {
                     return UrlPurpose{ .userinfo = {} };
                 },
-                .@"/num_chambers" => {
-                    return UrlPurpose{ .num_chambers = {} };
-                },
                 .@"/chambers_per_row" => {
-                    if (method == .GET) {
-                        return UrlPurpose{ .chambers_per_row = {} };
-                    } else if (method == .PUT) {
+                    if (method == .PUT) {
                         return UrlPurpose{ .set_chambers_per_row = {} };
                     } else {
                         return error.InvalidMethod;
                     }
                 },
                 .@"/num_balls" => {
-                    if (method == .GET) {
-                        return UrlPurpose{ .num_balls = {} };
-                    } else if (method == .PUT) {
+                    if (method == .PUT) {
                         return UrlPurpose{ .set_num_balls = {} };
                     } else {
                         return error.InvalidMethod;
@@ -745,11 +754,11 @@ const UrlPurpose = union(enum) {
                 .@"/reset" => {
                     return UrlPurpose{ .reset = {} };
                 },
+                .@"/init_info" => {
+                    return UrlPurpose{ .init_info = {} };
+                },
                 .@"/simulation_state" => {
                     return UrlPurpose{ .simulation_state = {} };
-                },
-                .@"/chamber_height" => {
-                    return UrlPurpose{ .chamber_height = {} };
                 },
             }
         }
