@@ -105,7 +105,7 @@ pub fn addSessionId(self: *Db, user: i64, session_id: []const u8) !void {
     }
 }
 
-pub fn addChamber(self: *Db, user_id: i64, chamber_name: []const u8, chamber_data: []const u8) !i64 {
+pub fn addChamber(self: *Db, user_id: i64, chamber_name: []const u8, chamber_data: []const u8) !ChamberId {
     const sql = "INSERT INTO chambers(user_id, name, data) VALUES(?1, ?2, ?3) RETURNING chambers.id;";
 
     const statement = try makeStatement(self.db, sql, "add chamber");
@@ -147,10 +147,10 @@ pub fn addChamber(self: *Db, user_id: i64, chamber_name: []const u8, chamber_dat
         return error.Sql;
     }
 
-    return id;
+    return .{ .value = id };
 }
 
-pub fn deleteChamber(self: *Db, chamber_id: i64) !void {
+pub fn deleteChamber(self: *Db, chamber_id: ChamberId) !void {
     const sql = "DELETE FROM chambers WHERE chambers.id = ?1;";
 
     const statement = try makeStatement(self.db, sql, "delete chamber");
@@ -159,7 +159,7 @@ pub fn deleteChamber(self: *Db, chamber_id: i64) !void {
     try checkSqliteRet("chamber id", c.sqlite3_bind_int64(
         statement,
         1,
-        chamber_id,
+        chamber_id.value,
     ));
 
     const ret = c.sqlite3_step(statement);
@@ -170,8 +170,12 @@ pub fn deleteChamber(self: *Db, chamber_id: i64) !void {
     }
 }
 
+pub const ChamberId = struct {
+    value: i64,
+};
+
 pub const Chamber = struct {
-    id: i64,
+    id: ChamberId,
     user_id: i64,
     name: []const u8,
     data: []const u8,
@@ -217,20 +221,20 @@ fn chamberFromColumns(alloc: Allocator, statement: *c.sqlite3_stmt, cols: Chambe
     errdefer alloc.free(data);
 
     return .{
-        .id = id,
+        .id = .{ .value = id },
         .user_id = user_id,
         .name = name,
         .data = data,
     };
 }
 
-pub fn getChamber(self: *Db, alloc: Allocator, id: i64) !Chamber {
+pub fn getChamber(self: *Db, alloc: Allocator, id: ChamberId) !Chamber {
     const sql = "SELECT id, user_id, name, data FROM chambers WHERE id = ?1;";
 
     const statement = try makeStatement(self.db, sql, "get chamber");
     defer finalizeStatement(statement);
 
-    try checkSqliteRet("bind chamber id", c.sqlite3_bind_int64(statement, 1, id));
+    try checkSqliteRet("bind chamber id", c.sqlite3_bind_int64(statement, 1, id.value));
 
     const sqlite_ret = c.sqlite3_step(statement);
 
@@ -464,9 +468,9 @@ fn createTables(db: *c.sqlite3) !void {
     }
 }
 
-fn indexOfChamber(id: i64, chambers: []const Chamber) ?usize {
+fn indexOfChamber(id: ChamberId, chambers: []const Chamber) ?usize {
     for (chambers, 0..) |chamber, i| {
-        if (id == chamber.id) {
+        if (id.value == chamber.id.value) {
             return i;
         }
     }

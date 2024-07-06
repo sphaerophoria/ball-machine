@@ -5,7 +5,7 @@ const wasm_chamber = @import("wasm_chamber.zig");
 const Chamber = @import("Chamber.zig");
 const Db = @import("Db.zig");
 
-const ChamberIds = std.ArrayListUnmanaged(i64);
+const ChamberIds = std.ArrayListUnmanaged(Db.ChamberId);
 const ChamberMods = std.ArrayListUnmanaged(*wasm_chamber.WasmChamber);
 
 const App = @This();
@@ -73,7 +73,7 @@ pub fn step(self: *App) !void {
     }
 }
 
-pub fn appendChamber(self: *App, db_id: i64, data: []const u8) !void {
+pub fn appendChamber(self: *App, chamber_id: Db.ChamberId, data: []const u8) !void {
     const chamber = try self.alloc.create(wasm_chamber.WasmChamber);
     errdefer self.alloc.destroy(chamber);
     chamber.* = try self.wasm_loader.load(self.alloc, data);
@@ -89,7 +89,7 @@ pub fn appendChamber(self: *App, db_id: i64, data: []const u8) !void {
         _ = self.simulation.chambers.pop();
     }
 
-    try self.chamber_ids.append(self.alloc, db_id);
+    try self.chamber_ids.append(self.alloc, chamber_id);
     errdefer {
         _ = self.chamber_ids.pop();
     }
