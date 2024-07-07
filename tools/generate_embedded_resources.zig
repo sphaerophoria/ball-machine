@@ -78,10 +78,6 @@ pub fn main() !void {
         return error.MissingDepsPath;
     }
 
-    if (args.len < 4) {
-        return error.MissingInputPath;
-    }
-
     const cwd = std.fs.cwd();
     const output_dir = try cwd.openDir(try parentPath(args[1]), .{ .iterate = true });
     var output_file = try cwd.createFile(args[1], .{});

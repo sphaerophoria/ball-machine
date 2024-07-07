@@ -32,7 +32,7 @@ fn setupWasmtime(b: *std.Build, opt: std.builtin.OptimizeMode) !std.Build.LazyPa
     return lib_path;
 }
 
-pub fn buildChamber(b: *std.Build, chambers_step: *std.Build.Step, name: []const u8, opt: std.builtin.OptimizeMode) !void {
+pub fn buildChamber(b: *std.Build, chambers_step: *std.Build.Step, check_step: *std.Build.Step, name: []const u8, opt: std.builtin.OptimizeMode) !void {
     const path = try std.fmt.allocPrint(b.allocator, "src/chambers/{s}.zig", .{name});
     const chamber = b.addExecutable(.{
         .name = name,
@@ -45,6 +45,7 @@ pub fn buildChamber(b: *std.Build, chambers_step: *std.Build.Step, name: []const
     chamber.root_module.addAnonymousImport("physics", .{ .root_source_file = b.path("src/physics.zig") });
     chamber.entry = .disabled;
     chamber.rdynamic = true;
+    check_step.dependOn(&chamber.step);
     b.installArtifact(chamber);
     chambers_step.dependOn(&b.addInstallArtifact(chamber, .{}).step);
 }
@@ -122,6 +123,45 @@ fn buildRustChamber(b: *std.Build, libphysics: *std.Build.Step.InstallArtifact, 
     b.getInstallStep().dependOn(&b.addInstallBinFile(wasm_path, "counter.wasm").step);
 }
 
+const GenerateEmbeddedResources = struct {
+    run_step: *std.Build.Step.Run,
+    output_path: std.Build.LazyPath,
+};
+fn makeGenerateEmbeddedResources(
+    b: *std.Build,
+) GenerateEmbeddedResources {
+    const generate_embedded_resources = b.addExecutable(.{
+        .name = "generate_embedded_resources",
+        .root_source_file = b.path("tools/generate_embedded_resources.zig"),
+        .target = b.host,
+    });
+
+    const generate_embedded_resources_step = b.addRunArtifact(generate_embedded_resources);
+    const output = generate_embedded_resources_step.addOutputFileArg("resources.zig");
+    _ = generate_embedded_resources_step.addDepFileOutputArg("deps.d");
+    return .{
+        .run_step = generate_embedded_resources_step,
+        .output_path = output,
+    };
+}
+
+fn makeMainExe(
+    b: *std.Build,
+    opt: std.builtin.OptimizeMode,
+    target: std.Build.ResolvedTarget,
+    wasmtime_lib: std.Build.LazyPath,
+    output: std.Build.LazyPath,
+) *std.Build.Step.Compile {
+    const exe = b.addExecutable(.{
+        .name = "ball-machine",
+        .root_source_file = b.path("src/main.zig"),
+        .target = target,
+        .optimize = opt,
+    });
+    addMainDependencies(b, exe, wasmtime_lib, output, opt);
+    return exe;
+}
+
 fn addMainDependencies(b: *std.Build, exe: *std.Build.Step.Compile, wasmtime_lib: std.Build.LazyPath, output: std.Build.LazyPath, opt: std.builtin.OptimizeMode) void {
     exe.root_module.addAnonymousImport("resources", .{ .root_source_file = output });
     exe.addLibraryPath(wasmtime_lib.dirname());
@@ -145,6 +185,7 @@ fn addMainDependencies(b: *std.Build, exe: *std.Build.Step.Compile, wasmtime_lib
 pub fn build(b: *std.Build) !void {
     const test_step = b.step("test", "Run unit tests");
     const chambers = b.step("chambers", "Chambers only");
+    const check = b.step("check", "Quick check");
     const embed_www = b.option(bool, "embed-www", "Embed src/res in exe") orelse true;
 
     const target = b.standardTargetOptions(.{});
@@ -163,38 +204,32 @@ pub fn build(b: *std.Build) !void {
     const libphysics_install = b.addInstallArtifact(libphysics, .{});
     b.getInstallStep().dependOn(&libphysics_install.step);
     b.installArtifact(libphysics);
-
-    const generate_embedded_resources = b.addExecutable(.{
-        .name = "generate_embedded_resources",
-        .root_source_file = b.path("tools/generate_embedded_resources.zig"),
-        .target = b.host,
-    });
-
-    try buildChamber(b, chambers, "simple", opt);
-    try buildChamber(b, chambers, "platforms", opt);
-    try buildChamber(b, chambers, "spinny_bar", opt);
+    try buildChamber(b, chambers, check, "simple", opt);
+    try buildChamber(b, chambers, check, "platforms", opt);
+    try buildChamber(b, chambers, check, "spinny_bar", opt);
     try buildCChamber(b, chambers, libphysics, opt);
     try buildRustChamber(b, libphysics_install, opt);
     const client_side_sim = try buildClientSideSim(b, opt);
 
-    const generate_embedded_resources_step = b.addRunArtifact(generate_embedded_resources);
-    const output = generate_embedded_resources_step.addOutputFileArg("resources.zig");
-    _ = generate_embedded_resources_step.addDepFileOutputArg("deps.d");
+    const generate_embedded_resources = makeGenerateEmbeddedResources(b);
     if (embed_www) {
-        generate_embedded_resources_step.addDirectoryArg(b.path("src/res"));
+        generate_embedded_resources.run_step.addDirectoryArg(b.path("src/res"));
     }
-    generate_embedded_resources_step.addFileArg(client_side_sim);
+    generate_embedded_resources.run_step.addFileArg(client_side_sim);
+
+    const generate_embedded_resources_check = makeGenerateEmbeddedResources(b);
 
     const wasmtime_lib = try setupWasmtime(b, opt);
 
-    const exe = b.addExecutable(.{
-        .name = "ball-machine",
-        .root_source_file = b.path("src/main.zig"),
-        .target = target,
-        .optimize = opt,
-    });
-    addMainDependencies(b, exe, wasmtime_lib, output, opt);
+    const exe = makeMainExe(b, opt, target, wasmtime_lib, generate_embedded_resources.output_path);
     b.installArtifact(exe);
+
+    // NOTE: We have to make the executable again for the check step. If the
+    // exe is depended on by an install step, even if not executed, this will
+    // result in femit-bin which is quite slow. A second binary that isn't
+    // installed allows that step to be skipped.
+    const exe_check = makeMainExe(b, opt, target, wasmtime_lib, generate_embedded_resources_check.output_path);
+    check.dependOn(&exe_check.step);
 
     const generate_test_db = b.addExecutable(.{
         .name = "generate_test_db",
@@ -202,7 +237,7 @@ pub fn build(b: *std.Build) !void {
         .target = target,
         .optimize = opt,
     });
-    addMainDependencies(b, generate_test_db, wasmtime_lib, output, opt);
+    addMainDependencies(b, generate_test_db, wasmtime_lib, generate_embedded_resources.output_path, opt);
     generate_test_db.root_module.addAnonymousImport("Db", .{ .root_source_file = b.path("src/Db.zig") });
     b.installArtifact(generate_test_db);
 
@@ -211,7 +246,7 @@ pub fn build(b: *std.Build) !void {
         .target = target,
         .test_runner = b.path("test/test_runner.zig"),
     });
-    addMainDependencies(b, unit_tests, wasmtime_lib, output, opt);
+    addMainDependencies(b, unit_tests, wasmtime_lib, generate_embedded_resources.output_path, opt);
 
     const run_unit_tests = b.addRunArtifact(unit_tests);
     test_step.dependOn(&run_unit_tests.step);
