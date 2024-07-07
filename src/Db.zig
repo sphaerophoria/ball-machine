@@ -150,7 +150,37 @@ pub fn addChamber(self: *Db, user_id: i64, chamber_name: []const u8, chamber_dat
     return .{ .value = id };
 }
 
+fn isChamberAccepted(self: *Db, chamber_id: ChamberId) !bool {
+    const sql = "SELECT 1 FROM accepted_chambers WHERE id = ?1;";
+
+    const statement = try makeStatement(self.db, sql, "isChamberAccepted");
+    defer finalizeStatement(statement);
+
+    try checkSqliteRet("chamber id", c.sqlite3_bind_int64(
+        statement,
+        1,
+        chamber_id.value,
+    ));
+
+    const ret = c.sqlite3_step(statement);
+    if (ret == c.SQLITE_DONE) {
+        return false;
+    }
+
+    if (ret != c.SQLITE_ROW) {
+        std.log.err("Failed to get user id from session id: {d}", .{ret});
+        return error.Sql;
+    }
+
+    return true;
+}
+
 pub fn deleteChamber(self: *Db, chamber_id: ChamberId) !void {
+    if (try self.isChamberAccepted(chamber_id)) {
+        std.log.err("Cannot delete accepted chamber", .{});
+        return error.InternalError;
+    }
+
     const sql = "DELETE FROM chambers WHERE chambers.id = ?1;";
 
     const statement = try makeStatement(self.db, sql, "delete chamber");
@@ -178,6 +208,7 @@ pub const Chamber = struct {
     id: ChamberId,
     user_id: i64,
     name: []const u8,
+    // Zero length if not present
     data: []const u8,
 
     pub fn deinit(self: *Chamber, alloc: Allocator) void {
@@ -201,7 +232,7 @@ const ChamberSqliteColumns = struct {
     id: c_int,
     user_id: c_int,
     name: c_int,
-    data: c_int,
+    data: ?c_int,
 };
 
 fn chamberFromColumns(alloc: Allocator, statement: *c.sqlite3_stmt, cols: ChamberSqliteColumns) !Chamber {
@@ -214,11 +245,14 @@ fn chamberFromColumns(alloc: Allocator, statement: *c.sqlite3_stmt, cols: Chambe
     };
     errdefer alloc.free(name);
 
-    const data = try extractColumnBlob(alloc, statement, cols.data) orelse {
-        std.log.err("Chamber has no data", .{});
-        return error.Sql;
-    };
+    var data: []const u8 = &.{};
     errdefer alloc.free(data);
+    if (cols.data) |data_col| {
+        data = try extractColumnBlob(alloc, statement, data_col) orelse {
+            std.log.err("Chamber has no data", .{});
+            return error.Sql;
+        };
+    }
 
     return .{
         .id = .{ .value = id },
@@ -251,12 +285,7 @@ pub fn getChamber(self: *Db, alloc: Allocator, id: ChamberId) !Chamber {
     });
 }
 
-pub fn getChambers(self: *Db, alloc: Allocator) !ChamberList {
-    const sql = "SELECT id, user_id, name, data FROM chambers;";
-
-    const statement = try makeStatement(self.db, sql, "get chambers");
-    defer finalizeStatement(statement);
-
+fn sqlToChamberList(alloc: Allocator, statement: *c.sqlite3_stmt, cols: ChamberSqliteColumns) !ChamberList {
     var chambers = std.ArrayList(Chamber).init(alloc);
     errdefer {
         for (chambers.items) |*item| {
@@ -276,12 +305,7 @@ pub fn getChambers(self: *Db, alloc: Allocator) !ChamberList {
             return error.Sql;
         }
 
-        const chamber = try chamberFromColumns(alloc, statement, .{
-            .id = 0,
-            .user_id = 1,
-            .name = 2,
-            .data = 3,
-        });
+        const chamber = try chamberFromColumns(alloc, statement, cols);
 
         try chambers.append(chamber);
     }
@@ -290,6 +314,51 @@ pub fn getChambers(self: *Db, alloc: Allocator) !ChamberList {
     return .{
         .items = items,
     };
+}
+
+pub fn getAcceptedChambers(self: *Db, alloc: Allocator) !ChamberList {
+    const sql = "SELECT id, user_id, name, data FROM chambers WHERE EXISTS (SELECT 1 FROM accepted_chambers WHERE chambers.id = accepted_chambers.id );";
+    const statement = try makeStatement(self.db, sql, "get accepted chambers");
+    defer finalizeStatement(statement);
+
+    return sqlToChamberList(alloc, statement, .{
+        .id = 0,
+        .user_id = 1,
+        .name = 2,
+        .data = 3,
+    });
+}
+
+pub fn getUnacceptedChambers(self: *Db, alloc: Allocator) !ChamberList {
+    const sql = "SELECT id, user_id, name FROM chambers WHERE NOT EXISTS (SELECT 1 FROM accepted_chambers WHERE chambers.id = accepted_chambers.id );";
+    const statement = try makeStatement(self.db, sql, "get unaccepted chambers");
+    defer finalizeStatement(statement);
+
+    return sqlToChamberList(alloc, statement, .{
+        .id = 0,
+        .user_id = 1,
+        .name = 2,
+        .data = null,
+    });
+}
+
+pub fn acceptChamber(self: *Db, id: ChamberId) !void {
+    const sql = "INSERT OR IGNORE INTO accepted_chambers VALUES (?1);";
+
+    const statement = try makeStatement(self.db, sql, "get unaccepted chambers");
+    defer finalizeStatement(statement);
+
+    try checkSqliteRet("bind chamber id", c.sqlite3_bind_int64(
+        statement,
+        1,
+        id.value,
+    ));
+
+    const sqlite_ret = c.sqlite3_step(statement);
+    if (sqlite_ret != c.SQLITE_DONE) {
+        std.log.err("Failed to run accept chamber", .{});
+        return error.Sql;
+    }
 }
 
 pub const UserInfo = struct {
@@ -304,6 +373,68 @@ pub const UserInfo = struct {
         alloc.free(self.username);
     }
 };
+
+const UserCols = struct {
+    id: c_int,
+    twitch_id: c_int,
+    username: c_int,
+    issue_time: c_int,
+    expire_time: c_int,
+};
+
+pub fn userFromCols(alloc: Allocator, statement: *c.sqlite3_stmt, cols: UserCols) !?UserInfo {
+    const ret = c.sqlite3_step(statement);
+    if (ret == c.SQLITE_DONE) {
+        return null;
+    }
+
+    if (ret != c.SQLITE_ROW) {
+        std.log.err("Failed to get user id from session id: {d}", .{ret});
+        return error.Sql;
+    }
+
+    const user_id = c.sqlite3_column_int64(statement, cols.id);
+
+    const twitch_id = try extractColumnText(alloc, statement, cols.twitch_id) orelse {
+        std.log.err("No twitch id", .{});
+        return error.Sql;
+    };
+    errdefer alloc.free(twitch_id);
+
+    const username = try extractColumnText(alloc, statement, cols.username) orelse {
+        std.log.err("No username", .{});
+        return error.Sql;
+    };
+    errdefer alloc.free(username);
+
+    const issue_time = c.sqlite3_column_int64(statement, cols.issue_time);
+    const expire_time = c.sqlite3_column_int64(statement, cols.expire_time);
+
+    return .{
+        .id = user_id,
+        .twitch_id = twitch_id,
+        .username = username,
+        .issue_time = issue_time,
+        .expire_time = expire_time,
+    };
+}
+
+pub fn userFromId(self: *Db, alloc: Allocator, id: i64) !?UserInfo {
+    const sql = "SELECT id, twitch_id, username, issue_time, expire_time FROM users WHERE id = ?1";
+
+    const statement = try makeStatement(self.db, sql, "get user");
+    defer finalizeStatement(statement);
+
+    try checkSqliteRet("bind session id", c.sqlite3_bind_int64(statement, 1, id));
+
+    return userFromCols(alloc, statement, .{
+        .id = 0,
+        .twitch_id = 1,
+        .username = 2,
+        .issue_time = 3,
+        .expire_time = 4,
+    });
+}
 
 pub fn userFromSessionId(self: *Db, alloc: Allocator, session_id: []const u8) !?UserInfo {
     const sql = "SELECT users.id, users.twitch_id, users.username, users.issue_time, users.expire_time " ++
@@ -321,40 +452,13 @@ pub fn userFromSessionId(self: *Db, alloc: Allocator, session_id: []const u8) !?
         c.SQLITE_STATIC,
     ));
 
-    const ret = c.sqlite3_step(statement);
-    if (ret == c.SQLITE_DONE) {
-        return null;
-    }
-
-    if (ret != c.SQLITE_ROW) {
-        std.log.err("Failed to get user id from session id: {d}", .{ret});
-        return error.Sql;
-    }
-
-    const user_id = c.sqlite3_column_int64(statement, 0);
-
-    const twitch_id = try extractColumnText(alloc, statement, 1) orelse {
-        std.log.err("No twitch id", .{});
-        return error.Sql;
-    };
-    errdefer alloc.free(twitch_id);
-
-    const username = try extractColumnText(alloc, statement, 2) orelse {
-        std.log.err("No username", .{});
-        return error.Sql;
-    };
-    errdefer alloc.free(username);
-
-    const issue_time = c.sqlite3_column_int64(statement, 3);
-    const expire_time = c.sqlite3_column_int64(statement, 4);
-
-    return .{
-        .id = user_id,
-        .twitch_id = twitch_id,
-        .username = username,
-        .issue_time = issue_time,
-        .expire_time = expire_time,
-    };
+    return userFromCols(alloc, statement, .{
+        .id = 0,
+        .twitch_id = 1,
+        .username = 2,
+        .issue_time = 3,
+        .expire_time = 4,
+    });
 }
 
 fn toSqlLen(len: usize) !c_int {
@@ -466,6 +570,19 @@ fn createTables(db: *c.sqlite3) !void {
         std.log.err("Failed to create chambers table: {s}", .{err});
         return error.Sql;
     }
+
+    ret = c.sqlite3_exec(db,
+        \\CREATE TABLE IF NOT EXISTS accepted_chambers (
+        \\    id INTEGER PRIMARY KEY UNIQUE NOT NULL,
+        \\    FOREIGN KEY(id) REFERENCES chambers(id)
+        \\) STRICT;
+    , null, null, &err_c);
+
+    if (ret != c.SQLITE_OK) {
+        const err: [*:0]u8 = @ptrCast(err_c);
+        std.log.err("Failed to create chambers table: {s}", .{err});
+        return error.Sql;
+    }
 }
 
 fn indexOfChamber(id: ChamberId, chambers: []const Chamber) ?usize {
@@ -523,34 +640,56 @@ test "sanity test" {
     const chamber_id = try db.addChamber(user_id, "name", "data");
     const chamber_id2 = try db.addChamber(user_id2, "name2", "data2");
 
-    var chambers = try db.getChambers(std.testing.allocator);
-    defer chambers.deinit(std.testing.allocator);
-    try std.testing.expectEqual(chambers.items.len, 2);
+    {
+        var chambers = try db.getAcceptedChambers(std.testing.allocator);
+        defer chambers.deinit(std.testing.allocator);
+        try std.testing.expectEqual(chambers.items.len, 0);
+    }
 
-    const chamber_idx = indexOfChamber(chamber_id, chambers.items) orelse {
-        return error.NoChamber;
-    };
+    {
+        var chambers = try db.getUnacceptedChambers(std.testing.allocator);
+        defer chambers.deinit(std.testing.allocator);
+        const chamber_idx = indexOfChamber(chamber_id, chambers.items) orelse {
+            return error.NoChamber;
+        };
 
-    const chamber = chambers.items[chamber_idx];
-    try std.testing.expectEqual(user_id, chamber.user_id);
-    try std.testing.expectEqualStrings("name", chamber.name);
-    try std.testing.expectEqualStrings("data", chamber.data);
+        const chamber = chambers.items[chamber_idx];
+        try std.testing.expectEqual(user_id, chamber.user_id);
+        try std.testing.expectEqualStrings("name", chamber.name);
+        try std.testing.expectEqualStrings("", chamber.data);
 
-    const chamber_idx2 = indexOfChamber(chamber_id2, chambers.items) orelse {
-        return error.NoChamber;
-    };
+        const chamber_idx2 = indexOfChamber(chamber_id2, chambers.items) orelse {
+            return error.NoChamber;
+        };
 
-    const chamber2 = chambers.items[chamber_idx2];
-    try std.testing.expectEqual(user_id2, chamber2.user_id);
-    try std.testing.expectEqualStrings("name2", chamber2.name);
-    try std.testing.expectEqualStrings("data2", chamber2.data);
+        const chamber2 = chambers.items[chamber_idx2];
+        try std.testing.expectEqual(user_id2, chamber2.user_id);
+        try std.testing.expectEqualStrings("name2", chamber2.name);
+        try std.testing.expectEqualStrings("", chamber2.data);
 
-    try db.deleteChamber(chamber_id2);
+        try db.deleteChamber(chamber_id2);
+    }
 
-    var chambers_again = try db.getChambers(std.testing.allocator);
-    defer chambers_again.deinit(std.testing.allocator);
-    try std.testing.expectEqual(chambers_again.items.len, 1);
-    try std.testing.expectEqual(chambers_again.items[0].id, chamber_id);
+    try db.acceptChamber(chamber_id);
+    {
+        var chambers = try db.getUnacceptedChambers(std.testing.allocator);
+        defer chambers.deinit(std.testing.allocator);
+        try std.testing.expectEqual(chambers.items.len, 0);
+    }
+
+    {
+        var chambers = try db.getAcceptedChambers(std.testing.allocator);
+        defer chambers.deinit(std.testing.allocator);
+        try std.testing.expectEqual(chambers.items.len, 1);
+        const chamber_idx = indexOfChamber(chamber_id, chambers.items) orelse {
+            return error.NoChamber;
+        };
+
+        const chamber = chambers.items[chamber_idx];
+        try std.testing.expectEqual(user_id, chamber.user_id);
+        try std.testing.expectEqualStrings("name", chamber.name);
+        try std.testing.expectEqualStrings("data", chamber.data);
+    }
 }
 
 test "duplicate session id" {

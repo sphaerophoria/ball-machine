@@ -1,5 +1,6 @@
 import { ChamberRenderer } from "./chamber_renderer.js";
 import { makeChamber } from "./wasm.js";
+import { sanitize } from "./sanitize.js";
 
 function loadChamber(chamber, chamber_state) {
   const len = chamber_state.length;
@@ -143,10 +144,12 @@ async function init() {
 
   const userinfo_response = await fetch("/userinfo");
   const userinfo = await userinfo_response.json();
-  if (userinfo.match(/^[0-9a-zA-Z]{1,16}$/)) {
-    document.getElementById("username").innerHTML = "hello " + userinfo;
-  } else {
-    document.getElementById("username").innerHTML = "hello <REDACTED>";
+  document.getElementById("username").innerHTML =
+    "hello " + sanitize(userinfo.name);
+
+  if (userinfo.is_admin === true) {
+    const admin_options = document.getElementById("admin_options");
+    admin_options.style.display = "unset";
   }
 }
 

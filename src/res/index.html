@@ -15,6 +15,10 @@
         display: grid;
         grid-template-columns: repeat(var(--num-columns), 1fr);
       }
+
+      #admin_options {
+        display: none;
+      }
     </style>
   </head>
   <body>
@@ -22,12 +26,14 @@
       <a href="/login_redirect">Log in with twitch</a>
     </div>
     <div id="username"></div>
-    <button id="reset">Reset</button>
-    <div>
-      <label for="chambers_per_row">Chambers per row</label>
-      <input id="chambers_per_row" type="number" />
-      <label for="num_balls">Num balls</label>
-      <input id="num_balls" type="number" />
+    <div id="admin_options">
+      <button id="reset">Reset</button>
+      <div>
+        <label for="chambers_per_row">Chambers per row</label>
+        <input id="chambers_per_row" type="number" />
+        <label for="num_balls">Num balls</label>
+        <input id="num_balls" type="number" />
+      </div>
     </div>
     <div id="chambers"></div>
   </body>

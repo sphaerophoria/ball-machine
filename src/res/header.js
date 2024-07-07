@@ -4,10 +4,24 @@ const header_html = `
 <a href="/chamber_test.html">Chamber testing</a>
 `;
 
+var header = null;
+
+async function appendAdmin() {
+  const response = await fetch("/userinfo");
+  const response_data = await response.json();
+  if (response_data.is_admin === true) {
+    const admin_link = document.createElement("a");
+    admin_link.href = "/admin.html";
+    admin_link.innerHTML = "Admin";
+    header.appendChild(admin_link);
+  }
+}
+
 function init() {
-  const header = document.createElement("div");
+  header = document.createElement("div");
   header.innerHTML = header_html;
   document.body.insertBefore(header, document.body.firstChild);
+  appendAdmin();
 }
 
 init();

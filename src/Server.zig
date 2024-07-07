@@ -19,6 +19,7 @@ const Server = @This();
 alloc: Allocator,
 www_root: ?[]const u8,
 app: *App,
+admin_id: []const u8,
 client_id: []const u8,
 auth_request_thread: *AuthRequestThread,
 auth_request_handle: std.Thread,
@@ -30,6 +31,7 @@ pub fn init(
     alloc: Allocator,
     www_root: ?[]const u8,
     app: *App,
+    admin_id: []const u8,
     client_id: []const u8,
     client_secret: []const u8,
     jwt_keys: []const userinfo.RsaParams,
@@ -55,6 +57,7 @@ pub fn init(
         .alloc = alloc,
         .www_root = www_root,
         .app = app,
+        .admin_id = admin_id,
         .client_id = trimmed_id,
         .auth = auth,
         .auth_request_thread = auth_request_thread,
@@ -205,9 +208,93 @@ const Connection = struct {
         return try http.Writer.init(alloc, response_header, stringized, true);
     }
 
+    fn processAdminRequest(self: *Connection, url_purpose: AdminUrlPurpose, reader: http.Reader) !?http.Writer {
+        var user = self.server.auth.userForRequest(self.server.alloc, reader.header_buf) catch |e| {
+            std.log.err("Admin account check failed", .{});
+            return e;
+        } orelse {
+            std.log.err("Admin request triggered when not logged in", .{});
+            return error.Unauthenticated;
+        };
+        defer user.deinit(self.server.alloc);
+
+        if (!std.mem.eql(u8, user.twitch_id, self.server.admin_id)) {
+            std.log.err("Admin request triggered, but {s} is not an admin", .{user.twitch_id});
+            return error.Unauthenticated;
+        }
+
+        switch (url_purpose) {
+            .set_chambers_per_row => {
+                const chambers_per_row = try std.fmt.parseInt(usize, reader.buf.items, 10);
+                if (chambers_per_row < 1) {
+                    return error.Invalid;
+                }
+                self.server.app.simulation.setChambersPerRow(chambers_per_row);
+                const response_header = http.Header{
+                    .status = .ok,
+                    .content_type = .@"application/json",
+                    .content_length = 0,
+                };
+                return try http.Writer.init(self.server.alloc, response_header, "", false);
+            },
+            .set_num_balls => {
+                const num_balls = try std.fmt.parseInt(usize, reader.buf.items, 10);
+
+                try self.server.app.simulation.setNumBalls(num_balls);
+                const response_header = http.Header{
+                    .status = .ok,
+                    .content_type = .@"application/json",
+                    .content_length = 0,
+                };
+                return try http.Writer.init(self.server.alloc, response_header, "", false);
+            },
+            .reset => {
+                const simulation = &self.server.app.simulation;
+                simulation.reset();
+                const response_header = http.Header{
+                    .status = .ok,
+                    .content_type = .@"application/json",
+                    .content_length = 0,
+                };
+                return try http.Writer.init(self.server.alloc, response_header, "", false);
+            },
+            .accept_chamber => |id_raw| {
+                const id = Db.ChamberId{ .value = id_raw };
+
+                var chamber = try self.server.db.getChamber(self.server.alloc, id);
+                defer chamber.deinit(self.server.alloc);
+
+                try self.server.app.appendChamber(id, chamber.data);
+
+                try self.server.db.acceptChamber(id);
+                const response_header = http.Header{
+                    .status = .ok,
+                    .content_type = .@"application/json",
+                    .content_length = 0,
+                };
+                return try http.Writer.init(self.server.alloc, response_header, "", false);
+            },
+            .reject_chamber => |id_raw| {
+                const id = Db.ChamberId{ .value = id_raw };
+
+                try self.server.db.deleteChamber(id);
+
+                const response_header = http.Header{
+                    .status = .ok,
+                    .content_type = .@"application/json",
+                    .content_length = 0,
+                };
+                return try http.Writer.init(self.server.alloc, response_header, "", false);
+            },
+        }
+    }
+
     fn processRequest(self: *Connection, reader: http.Reader) !?http.Writer {
         const url_purpose = try UrlPurpose.parse(reader.target, reader.method);
         switch (url_purpose) {
+            .admin => |admin_url_purpose| {
+                return try self.processAdminRequest(admin_url_purpose, reader);
+            },
             .init_info => {
                 const InitInfo = struct {
                     chamber_height: f32,
@@ -244,30 +331,6 @@ const Connection = struct {
                 };
                 return try http.Writer.init(self.server.alloc, response_header, response_body, true);
             },
-            .set_chambers_per_row => {
-                const chambers_per_row = try std.fmt.parseInt(usize, reader.buf.items, 10);
-                if (chambers_per_row < 1) {
-                    return error.Invalid;
-                }
-                self.server.app.simulation.setChambersPerRow(chambers_per_row);
-                const response_header = http.Header{
-                    .status = .ok,
-                    .content_type = .@"application/json",
-                    .content_length = 0,
-                };
-                return try http.Writer.init(self.server.alloc, response_header, "", false);
-            },
-            .set_num_balls => {
-                const num_balls = try std.fmt.parseInt(usize, reader.buf.items, 10);
-
-                try self.server.app.simulation.setNumBalls(num_balls);
-                const response_header = http.Header{
-                    .status = .ok,
-                    .content_type = .@"application/json",
-                    .content_length = 0,
-                };
-                return try http.Writer.init(self.server.alloc, response_header, "", false);
-            },
             .simulation_state => {
                 const simulation = &self.server.app.simulation;
 
@@ -288,16 +351,6 @@ const Connection = struct {
                     .content_length = response_body.len,
                 };
                 return try http.Writer.init(self.server.alloc, response_header, response_body, true);
-            },
-            .reset => {
-                const simulation = &self.server.app.simulation;
-                simulation.reset();
-                const response_header = http.Header{
-                    .status = .ok,
-                    .content_type = .@"application/json",
-                    .content_length = 0,
-                };
-                return try http.Writer.init(self.server.alloc, response_header, "", false);
             },
             .get_chamber => |id| {
                 var chamber = try self.server.db.getChamber(self.server.alloc, Db.ChamberId{ .value = id });
@@ -342,13 +395,7 @@ const Connection = struct {
                     return error.NoChamber;
                 };
 
-                const chamber_id = try self.server.db.addChamber(user.id, chamber_name, chamber);
-                self.server.app.appendChamber(chamber_id, chamber) catch |e| {
-                    self.server.db.deleteChamber(chamber_id) catch |del_err| {
-                        std.log.err("Failed to delete chamber: {any}", .{del_err});
-                    };
-                    return e;
-                };
+                _ = try self.server.db.addChamber(user.id, chamber_name, chamber);
 
                 const response_header = http.Header{
                     .status = .see_other,
@@ -363,6 +410,67 @@ const Connection = struct {
                 };
                 return try http.Writer.init(self.server.alloc, response_header, "", false);
             },
+            .unaccepted_chambers => {
+                var unaccepted_chambers = try self.server.db.getUnacceptedChambers(self.server.alloc);
+                defer unaccepted_chambers.deinit(self.server.alloc);
+
+                const UnacceptedChamberJsonSerializer = struct {
+                    chamber_list: *const Db.ChamberList,
+                    db: *Db,
+                    alloc: Allocator,
+
+                    pub fn jsonStringify(ser: *const @This(), writer: anytype) @TypeOf(writer.*).Error!void {
+                        try writer.beginArray();
+                        for (ser.chamber_list.items) |chamber| {
+                            // FIXME: who is it by
+                            const Elem = struct {
+                                chamber_name: []const u8,
+                                chamber_id: i64,
+                                user: []const u8,
+                            };
+                            var info = ser.db.userFromId(ser.alloc, chamber.user_id) catch null;
+                            defer {
+                                if (info) |*v| {
+                                    v.deinit(ser.alloc);
+                                }
+                            }
+                            var name: []const u8 = "";
+                            if (info) |v| {
+                                name = v.username;
+                            }
+                            const elem = Elem{
+                                .chamber_id = chamber.id.value,
+                                .chamber_name = chamber.name,
+                                .user = name,
+                            };
+
+                            try writer.write(elem);
+                        }
+                        try writer.endArray();
+                    }
+                };
+
+                var out_buf = try std.ArrayList(u8).initCapacity(self.server.alloc, 4096);
+                errdefer out_buf.deinit();
+
+                const serializer = UnacceptedChamberJsonSerializer{
+                    .chamber_list = &unaccepted_chambers,
+                    .db = self.server.db,
+                    .alloc = self.server.alloc,
+                };
+
+                try std.json.stringify(serializer, .{}, out_buf.writer());
+
+                const response_body = try out_buf.toOwnedSlice();
+                errdefer self.server.alloc.free(response_body);
+
+                const response_header = http.Header{
+                    .status = .ok,
+                    .content_type = .@"application/json",
+                    .content_length = response_body.len,
+                };
+                return try http.Writer.init(self.server.alloc, response_header, response_body, true);
+            },
             .userinfo => {
                 var user = try self.server.auth.userForRequest(self.server.alloc, reader.header_buf) orelse {
                     const response_header = http.Header{
@@ -374,13 +482,30 @@ const Connection = struct {
                 };
                 defer user.deinit(self.server.alloc);
 
-                const username = try std.fmt.allocPrint(self.server.alloc, "\"{s}\"", .{user.username});
+                const UserinfoJson = struct {
+                    name: []const u8,
+                    is_admin: bool,
+                };
+
+                const userinfo_json = UserinfoJson{
+                    .name = user.username,
+                    .is_admin = std.mem.eql(u8, user.twitch_id, self.server.admin_id),
+                };
+
+                var out_buf = try std.ArrayList(u8).initCapacity(self.server.alloc, 4096);
+                defer out_buf.deinit();
+
+                try std.json.stringify(userinfo_json, .{}, out_buf.writer());
+
+                const to_send = try out_buf.toOwnedSlice();
+                errdefer self.server.alloc.free(to_send);
+
                 const response_header = http.Header{
                     .status = .ok,
                     .content_type = .@"application/json",
-                    .content_length = username.len,
+                    .content_length = to_send.len,
                 };
-                return try http.Writer.init(self.server.alloc, response_header, username, true);
+                return try http.Writer.init(self.server.alloc, response_header, to_send, true);
             },
             .redirect => |loc| {
                 const header = http.Header{
@@ -658,10 +783,18 @@ fn getResourcePathAlloc(alloc: Allocator, root: []const u8, path: []const u8) ![
     return real_path;
 }
 
+const AdminUrlPurpose = union(enum) {
+    set_chambers_per_row: void,
+    set_num_balls: void,
+    accept_chamber: i64,
+    reject_chamber: i64,
+    reset: void,
+};
+
 const UrlPurpose = union(enum) {
+    admin: AdminUrlPurpose,
     init_info: void,
     simulation_state: void,
-    reset: void,
     get_chamber: i64,
     login_redirect: void,
     login_code: []const u8,
@@ -669,8 +802,7 @@ const UrlPurpose = union(enum) {
     userinfo: void,
     get_resource: void,
     redirect: []const u8,
-    set_chambers_per_row: void,
-    set_num_balls: void,
+    unaccepted_chambers: void,
 
     fn parseGetChamber(target: []const u8) ?UrlPurpose {
         if (target.len < 1 or target[0] != '/') {
@@ -706,6 +838,17 @@ const UrlPurpose = union(enum) {
         return null;
     }
 
+    fn extractIdFromQueryParams(target: []const u8) !?i64 {
+        var it = http.QueryParamsIt.init(target);
+        while (it.next()) |param| {
+            if (std.mem.eql(u8, param.key, "id")) {
+                return try std.fmt.parseInt(i64, param.val, 10);
+            }
+        }
+
+        return null;
+    }
+
     const NonIndexedTargetOption = enum {
         @"/init_info",
         @"/login_redirect",
@@ -716,6 +859,24 @@ const UrlPurpose = union(enum) {
         @"/",
         @"/reset",
         @"/simulation_state",
+        @"/unaccepted_chambers",
+    };
+
+    const QueryParamOptions = enum {
+        @"/login_code",
+        @"/accept_chamber",
+        @"/reject_chamber",
+
+        fn parse(target: []const u8) ?QueryParamOptions {
+            inline for (std.meta.fields(QueryParamOptions)) |field| {
+                const field_w_qmark = field.name ++ "?";
+                if (std.mem.startsWith(u8, target, field_w_qmark)) {
+                    return @field(QueryParamOptions, field.name);
+                }
+            }
+
+            return null;
+        }
     };
 
     fn parse(target: []const u8, method: std.http.Method) !UrlPurpose {
@@ -736,14 +897,14 @@ const UrlPurpose = union(enum) {
                 },
                 .@"/chambers_per_row" => {
                     if (method == .PUT) {
-                        return UrlPurpose{ .set_chambers_per_row = {} };
+                        return UrlPurpose{ .admin = .{ .set_chambers_per_row = {} } };
                     } else {
                         return error.InvalidMethod;
                     }
                 },
                 .@"/num_balls" => {
                     if (method == .PUT) {
-                        return UrlPurpose{ .set_num_balls = {} };
+                        return UrlPurpose{ .admin = .{ .set_num_balls = {} } };
                     } else {
                         return error.InvalidMethod;
                     }
@@ -752,7 +913,7 @@ const UrlPurpose = union(enum) {
                     return UrlPurpose{ .redirect = "/index.html" };
                 },
                 .@"/reset" => {
-                    return UrlPurpose{ .reset = {} };
+                    return UrlPurpose{ .admin = .{ .reset = {} } };
                 },
                 .@"/init_info" => {
                     return UrlPurpose{ .init_info = {} };
@@ -760,15 +921,38 @@ const UrlPurpose = union(enum) {
                 .@"/simulation_state" => {
                     return UrlPurpose{ .simulation_state = {} };
                 },
+                .@"/unaccepted_chambers" => {
+                    return UrlPurpose{ .unaccepted_chambers = {} };
+                },
             }
         }
 
-        if (std.mem.startsWith(u8, target, "/login_code?")) {
-            const code = extractCodeFromQueryParams(target) orelse {
-                return error.NoCode;
-            };
+        if (QueryParamOptions.parse(target)) |opt| {
+            switch (opt) {
+                .@"/login_code" => {
+                    const code = extractCodeFromQueryParams(target) orelse {
+                        return error.NoCode;
+                    };
 
-            return UrlPurpose{ .login_code = code };
+                    return UrlPurpose{ .login_code = code };
+                },
+                .@"/accept_chamber" => {
+                    const id = try extractIdFromQueryParams(target) orelse {
+                        std.log.err("ID param not provided in /accept_chamber", .{});
+                        return error.NoId;
+                    };
+
+                    return UrlPurpose{ .admin = .{ .accept_chamber = id } };
+                },
+                .@"/reject_chamber" => {
+                    const id = try extractIdFromQueryParams(target) orelse {
+                        std.log.err("ID param not provided in /reject_chamber", .{});
+                        return error.NoId;
+                    };
+
+                    return UrlPurpose{ .admin = .{ .reject_chamber = id } };
+                },
+            }
         }
 
         return UrlPurpose{ .get_resource = {} };

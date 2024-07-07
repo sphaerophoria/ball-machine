@@ -13,6 +13,7 @@ const Args = struct {
     alloc: Allocator,
     www_root: ?[]const u8,
     port: u16,
+    admin_id: []const u8,
     client_id: []const u8,
     client_secret: []const u8,
     server_url: []const u8,
@@ -22,6 +23,7 @@ const Args = struct {
     const Option = enum {
         @"--www-root",
         @"--port",
+        @"--admin-id",
         @"--client-id",
         @"--client-secret",
         @"--db",
@@ -35,6 +37,7 @@ const Args = struct {
 
         var www_root: ?[]const u8 = null;
         var port: ?u16 = null;
+        var admin_id: ?[]const u8 = null;
         var client_id: ?[]const u8 = null;
         var client_secret: ?[]const u8 = null;
         var server_url: ?[]const u8 = null;
@@ -56,6 +59,12 @@ const Args = struct {
                     };
                     port = std.fmt.parseInt(u16, port_s, 10) catch {
                         print("--port argument is not a valid u16\n", .{});
+                        help(process_name);
+                    };
+                },
+                .@"--admin-id" => {
+                    admin_id = it.next() orelse {
+                        print("--admin-id provided with no argument\n", .{});
                         help(process_name);
                     };
                 },
@@ -94,6 +103,10 @@ const Args = struct {
             .www_root = www_root,
             .port = port orelse {
                 print("--port not provied\n", .{});
+                help(process_name);
+            },
+            .admin_id = admin_id orelse {
+                print("--admin-id not provided\n", .{});
                 help(process_name);
             },
             .client_id = client_id orelse {
@@ -137,6 +150,9 @@ const Args = struct {
                 },
                 .@"--port" => {
                     print("Which port to run the webserver on", .{});
+                },
+                .@"--admin-id" => {
+                    print("twitch id of account allowed to execute admin actions", .{});
                 },
                 .@"--client-id" => {
                     print("client id of twitch application", .{});
@@ -262,7 +278,7 @@ pub fn main() !void {
     var db = try Db.init(args.db);
     defer db.deinit();
 
-    var db_chambers = try db.getChambers(alloc);
+    var db_chambers = try db.getAcceptedChambers(alloc);
     defer db_chambers.deinit(alloc);
 
     var app = try App.init(alloc, db_chambers.items);
@@ -289,6 +305,7 @@ pub fn main() !void {
         alloc,
         args.www_root,
         &app,
+        std.mem.trim(u8, args.admin_id, &std.ascii.whitespace),
         std.mem.trim(u8, args.client_id, &std.ascii.whitespace),
         std.mem.trim(u8, args.client_secret, &std.ascii.whitespace),
         jwt_keys.items,
