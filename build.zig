@@ -145,6 +145,7 @@ fn addMainDependencies(b: *std.Build, exe: *std.Build.Step.Compile, wasmtime_lib
 pub fn build(b: *std.Build) !void {
     const test_step = b.step("test", "Run unit tests");
     const chambers = b.step("chambers", "Chambers only");
+    const embed_www = b.option(bool, "embed-www", "Embed src/res in exe") orelse true;
 
     const target = b.standardTargetOptions(.{});
     const opt = b.standardOptimizeOption(.{});
@@ -179,7 +180,9 @@ pub fn build(b: *std.Build) !void {
     const generate_embedded_resources_step = b.addRunArtifact(generate_embedded_resources);
     const output = generate_embedded_resources_step.addOutputFileArg("resources.zig");
     _ = generate_embedded_resources_step.addDepFileOutputArg("deps.d");
-    generate_embedded_resources_step.addDirectoryArg(b.path("src/res"));
+    if (embed_www) {
+        generate_embedded_resources_step.addDirectoryArg(b.path("src/res"));
+    }
     generate_embedded_resources_step.addFileArg(client_side_sim);
 
     const wasmtime_lib = try setupWasmtime(b, opt);
