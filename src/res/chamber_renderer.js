@@ -1,4 +1,4 @@
-export const canvas_width = 600;
+export const canvas_width = 300;
 
 export class ChamberRenderer {
   constructor(parent, chamber_height) {
