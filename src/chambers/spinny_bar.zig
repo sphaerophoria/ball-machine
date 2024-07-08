@@ -105,7 +105,7 @@ pub export fn step(num_balls: usize, delta: f32) void {
                 physics.applyCollision(ball, r, obj_normal, surface_collision_point_velocity, delta, 1.5);
             }
 
-            obj.pushIfColliding(ball, delta);
+            obj.pushIfColliding(ball, physics.Vec2.zero, delta, 0.001);
         }
     }
 }

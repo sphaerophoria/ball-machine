@@ -132,7 +132,7 @@ pub export fn step(num_balls: usize, delta: f32) void {
                 physics.applyCollision(ball, r, obj_normal, physics.Vec2.zero, delta, 0.9);
             }
 
-            obj.pushIfColliding(ball, delta);
+            obj.pushIfColliding(ball, physics.Vec2.zero, delta, 0.001);
         }
         state.platform_locs[i] += movement;
         state.platform_locs[i] = @mod(state.platform_locs[i], 2.0);

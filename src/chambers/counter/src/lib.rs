@@ -300,7 +300,7 @@ pub fn step(num_balls: usize, delta: f32) {
                 physics::apply_ball_collision(ball as *mut physics::ball, resolution.assume_init_ref(), &physics::surface_normal(&surface), &zero, delta, 0.9);
             }
 
-            physics::surface_push_if_colliding(&surface, ball as *mut physics::ball, delta);
+            physics::surface_push_if_colliding(&surface, ball as *mut physics::ball, &zero, delta, 0.001);
         }
     }
 

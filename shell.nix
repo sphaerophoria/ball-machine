@@ -30,6 +30,7 @@ pkgs.mkShell {
     pyright
     black
     rustPlatform.bindgenHook
+    blender
   ];
 }
 

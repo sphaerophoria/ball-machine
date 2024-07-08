@@ -146,7 +146,7 @@ pub const Surface = extern struct {
         return adjustment;
     }
 
-    pub fn pushIfColliding(self: *const Surface, ball: *Ball, delta: f32) void {
+    pub fn pushIfColliding(self: *const Surface, ball: *Ball, surface_velocity: Vec2, delta: f32, max_push: f32) void {
         const n = self.normal();
 
         if (ball.velocity.dot(n) > 0) {
@@ -180,7 +180,6 @@ pub const Surface = extern struct {
         };
 
         const overlap_amount = self.b.sub(most_overlapping_point).dot(n);
-        const max_push = 0.001;
 
         // In some cases the ball may be coming from under the surface. In
         // these cases we actually do not want to apply the push unless the
@@ -199,7 +198,7 @@ pub const Surface = extern struct {
             const preserved_velocity = bn.mul(ball.velocity.dot(bn));
             const push_amount = @min(overlap_amount, max_push);
             const frame_push = n.mul(push_amount);
-            const push_velocity = frame_push.mul(1.01 / delta);
+            const push_velocity = frame_push.mul(1.01 / delta).add(surface_velocity);
             ball.velocity = push_velocity.add(preserved_velocity);
             ball.pos = ball.pos.add(n.mul(overlap_amount));
         }

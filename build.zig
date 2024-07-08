@@ -76,12 +76,19 @@ const Modules = struct {
     physics: *Build.Module,
     resources: *Build.Module,
     fake_resources: *Build.Module,
+    dude_animation: *Build.Module,
 
     fn init(b: *Build, tools: Tools) Modules {
+        const physics = Build.Module.create(b, .{ .root_source_file = b.path("src/physics.zig") });
+
+        const dude_animation = Build.Module.create(b, .{ .root_source_file = generateDudeAnimation(b) });
+        dude_animation.addImport("physics", physics);
+
         return .{
-            .physics = Build.Module.create(b, .{ .root_source_file = b.path("src/physics.zig") }),
+            .physics = physics,
             .resources = Build.Module.create(b, .{ .root_source_file = tools.resources_zig_source }),
             .fake_resources = Build.Module.create(b, .{ .root_source_file = tools.fake_resources }),
+            .dude_animation = dude_animation,
         };
     }
 
@@ -234,11 +241,12 @@ const Builder = struct {
         });
     }
 
-    fn addZigChamber(self: *Builder, name: []const u8, path: []const u8) void {
+    fn addZigChamber(self: *Builder, name: []const u8, path: []const u8) *Step.Compile {
         const chamber = self.wasmExe(name, path);
         self.modules.linkPhysics(chamber);
         self.b.installArtifact(chamber);
         self.steps.check.dependOn(&chamber.step);
+        return chamber;
     }
 
     fn addCChamber(self: *Builder, name: []const u8, path: []const u8) void {
@@ -299,14 +307,27 @@ fn runCargo(b: *Build, options: BuildOptions, crate_root: []const u8, output_fil
     return lib_path;
 }
 
+fn generateDudeAnimation(b: *Build) std.Build.LazyPath {
+    const tool_run = b.addSystemCommand(&.{"blender"});
+    tool_run.setCwd(b.path("src/chambers/dude"));
+    tool_run.addArgs(&.{ "-b", "-P", "export_animation.py", "--" });
+    tool_run.addFileInput(b.path("src/chambers/dude/dude.blend"));
+    tool_run.addFileInput(b.path("src/chambers/dude/export_animation.py"));
+    return tool_run.addOutputFileArg("animation.zig");
+}
+
 pub fn build(b: *std.Build) !void {
     var builder = Builder.init(b);
 
-    builder.addZigChamber("simple", "src/chambers/simple.zig");
-    builder.addZigChamber("platforms", "src/chambers/platforms.zig");
-    builder.addZigChamber("spinny_bar", "src/chambers/spinny_bar.zig");
+    _ = builder.addZigChamber("simple", "src/chambers/simple.zig");
+    _ = builder.addZigChamber("platforms", "src/chambers/platforms.zig");
+    _ = builder.addZigChamber("spinny_bar", "src/chambers/spinny_bar.zig");
     builder.addCChamber("plinko", "src/chambers/plinko.c");
     builder.addRustChamber("counter", "src/chambers/counter");
+
+    const dude_chamber = builder.addZigChamber("dude", "src/chambers/dude.zig");
+    dude_chamber.root_module.addImport("animation", builder.modules.dude_animation);
+
     const client_side_sim = builder.wasmExe("simulation", "src/simulation_wasm.zig");
     builder.tools.embedFile(client_side_sim.getEmittedBin());
     if (builder.options.embed_www) {

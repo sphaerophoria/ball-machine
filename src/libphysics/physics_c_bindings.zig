@@ -101,8 +101,8 @@ pub export fn surface_collision_resolution(surface: *const Surface, p: *const Po
     return false;
 }
 
-pub export fn surface_push_if_colliding(surface: *const Surface, ball: *Ball, delta: f32) void {
-    return surface.pushIfColliding(ball, delta);
+pub export fn surface_push_if_colliding(surface: *const Surface, ball: *Ball, obj_velocity: *const Vec2, delta: f32, max_push: f32) void {
+    return surface.pushIfColliding(ball, obj_velocity.*, delta, max_push);
 }
 
 pub export fn surface_normal(surface: *const Surface) Vec2 {
