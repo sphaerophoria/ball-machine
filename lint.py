@@ -49,8 +49,6 @@ def main():
                 "5678",
                 "--server-url",
                 "http://localhost:8000",
-                "--www-root",
-                "src/res/",
                 "--db",
                 str(d),
             ]
