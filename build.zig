@@ -205,6 +205,8 @@ const Builder = struct {
         });
         ret.entry = .disabled;
         ret.rdynamic = true;
+        // Limit stack size to keep overall required memory usage lower
+        ret.stack_size = 16384;
         return ret;
     }
 
@@ -338,6 +340,10 @@ pub fn build(b: *std.Build) !void {
     exe.root_module.addImport("resources", builder.modules.resources);
     builder.b.installArtifact(exe);
     builder.libs.linkAll(exe);
+
+    const tester = builder.addExe("test_chamber", "src/test_chamber.zig");
+    builder.libs.linkAll(tester);
+    builder.b.installArtifact(tester);
 
     // NOTE: We have to make the executable again for the check step. If the
     // exe is depended on by an install step, even if not executed, this will

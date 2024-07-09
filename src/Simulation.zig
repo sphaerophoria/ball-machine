@@ -24,8 +24,9 @@ prng: std.rand.DefaultPrng,
 chambers: std.ArrayListUnmanaged(Chamber) = .{},
 chambers_per_row: usize = 2,
 num_steps_taken: u64,
+canvas_max_pixels: usize,
 
-pub fn init(alloc: Allocator, seed: usize) !Simulation {
+pub fn init(alloc: Allocator, seed: usize, canvas_max_pixels: usize) !Simulation {
     var prng = std.Random.DefaultPrng.init(seed);
 
     var balls = std.ArrayListUnmanaged(Ball){};
@@ -44,6 +45,7 @@ pub fn init(alloc: Allocator, seed: usize) !Simulation {
         .prng = prng,
         .balls = balls,
         .ball_chambers = ball_chambers,
+        .canvas_max_pixels = canvas_max_pixels,
     };
 }
 
@@ -101,7 +103,7 @@ pub fn step(self: *Simulation) !void {
 }
 
 pub fn addChamber(self: *Simulation, chamber: Chamber) !void {
-    try chamber.initChamber(max_num_balls);
+    try chamber.initChamber(max_num_balls, self.canvas_max_pixels);
     try self.chambers.append(self.alloc, chamber);
 }
 

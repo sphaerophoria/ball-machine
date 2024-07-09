@@ -1,9 +1,11 @@
+export const canvas_width = 600;
+
 export class ChamberRenderer {
   constructor(parent, chamber_height) {
     this.canvas = document.createElement("canvas");
     parent.appendChild(this.canvas);
 
-    this.canvas.width = 600;
+    this.canvas.width = canvas_width;
     this.canvas.height = this.canvas.width * chamber_height;
   }
 

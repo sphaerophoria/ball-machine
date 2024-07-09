@@ -1,3 +1,4 @@
+import { canvas_width } from "./chamber_renderer.js";
 import { LocalSimulation } from "./local_simulation.js";
 import { makeChamberDirect, makeSimulation } from "./wasm.js";
 
@@ -24,7 +25,13 @@ async function init() {
       const buffer = await ev.target.files[0].arrayBuffer();
       const chamber = await makeChamberDirect(buffer);
       const simulation = await makeSimulation(chamber);
-      simulation.instance.exports.init();
+      console.log(simulation.instance.exports.chamberHeight());
+      simulation.instance.exports.init(
+        0,
+        canvas_width *
+          canvas_width *
+          simulation.instance.exports.chamberHeight(),
+      );
       num_balls_spinner.value = simulation.instance.exports.numBalls();
       speed_slider.value = 100;
 

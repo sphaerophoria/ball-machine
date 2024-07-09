@@ -31,8 +31,8 @@ export async function makeChamberDirect(buffer) {
 }
 
 class SimulationCallbacks {
-  initChamber(max_balls) {
-    this.chamber.instance.exports.init(max_balls, 600 * 450);
+  initChamber(max_balls, canvas_max_pixels) {
+    this.chamber.instance.exports.init(max_balls, canvas_max_pixels);
     return true;
   }
 

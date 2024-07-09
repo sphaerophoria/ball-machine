@@ -66,7 +66,7 @@ fn initEmpty(alloc: Allocator, capacity: usize) !ServerSimulation {
     var seed: usize = undefined;
     try std.posix.getrandom(std.mem.asBytes(&seed));
 
-    var simulation = try Simulation.init(alloc, seed);
+    var simulation = try Simulation.init(alloc, seed, 0);
     errdefer simulation.deinit();
 
     var chamber_ids = try ChamberIds.initCapacity(alloc, capacity);

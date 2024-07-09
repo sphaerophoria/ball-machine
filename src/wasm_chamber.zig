@@ -11,6 +11,10 @@ const c = @cImport({
 
 pub const WasmLoader = struct {
     engine: *c.wasm_engine_t,
+    init_fuel_limit: u64 = 0,
+    step_fuel_limit: u64 = 0,
+    render_fuel_limit: u64 = 0,
+    memory_limit: i64 = -1,
 
     pub fn init() !WasmLoader {
         const engine = c.wasm_engine_new() orelse {
@@ -19,6 +23,22 @@ pub const WasmLoader = struct {
 
         return .{
             .engine = engine,
+        };
+    }
+
+    pub fn initWithLimits(init_fuel_limit: u64, step_fuel_limit: u64, render_fuel_limit: u64, memory_limit: i64) !WasmLoader {
+        const config = c.wasm_config_new();
+        c.wasmtime_config_consume_fuel_set(config, true);
+        const engine = c.wasm_engine_new_with_config(config) orelse {
+            return error.InitFailure;
+        };
+
+        return .{
+            .engine = engine,
+            .init_fuel_limit = init_fuel_limit,
+            .step_fuel_limit = step_fuel_limit,
+            .render_fuel_limit = render_fuel_limit,
+            .memory_limit = memory_limit,
         };
     }
 
@@ -33,6 +53,9 @@ pub const WasmLoader = struct {
         const context = c.wasmtime_store_context(store) orelse {
             return error.InitFailure;
         };
+
+        c.wasmtime_store_limiter(store, self.memory_limit, -1, -1, -1, -1);
+
         const module = try makeModuleFromData(data, self.engine);
         defer c.wasmtime_module_delete(module);
         const memory: *c.wasmtime_memory_t = try alloc.create(c.wasmtime_memory_t);
@@ -49,6 +72,7 @@ pub const WasmLoader = struct {
         const save_fn = try loadWasmFn("save", context, &instance);
         const save_size_fn = try loadWasmFn("saveSize", context, &instance);
         const load_fn = try loadWasmFn("load", context, &instance);
+        const render_fn = try loadWasmFn("render", context, &instance);
 
         return .{
             .alloc = alloc,
@@ -60,13 +84,16 @@ pub const WasmLoader = struct {
             .save_memory_fn = save_memory_fn,
             .balls_memory_fn = balls_memory_fn,
             .step_fn = step_fn,
+            .render_fn = render_fn,
             .save_fn = save_fn,
             .save_size_fn = save_size_fn,
             .load_fn = load_fn,
+            .init_fuel_limit = self.init_fuel_limit,
+            .step_fuel_limit = self.step_fuel_limit,
+            .render_fuel_limit = self.render_fuel_limit,
         };
     }
 };
-
 pub const WasmChamber = struct {
     alloc: Allocator,
     store: *c.wasmtime_store_t,
@@ -75,11 +102,15 @@ pub const WasmChamber = struct {
     memory: *c.wasmtime_memory_t,
     init_fn: c.wasmtime_func_t,
     step_fn: c.wasmtime_func_t,
+    render_fn: c.wasmtime_func_t,
     save_fn: c.wasmtime_func_t,
     save_memory_fn: c.wasmtime_func_t,
     save_size_fn: c.wasmtime_func_t,
     balls_memory_fn: c.wasmtime_func_t,
     load_fn: c.wasmtime_func_t,
+    init_fuel_limit: u64 = 0,
+    step_fuel_limit: u64 = 0,
+    render_fuel_limit: u64 = 0,
 
     pub fn deinit(self: *WasmChamber) void {
         self.alloc.destroy(self.memory);
@@ -102,14 +133,17 @@ pub const WasmChamber = struct {
         };
     }
 
-    fn initChamber(ctx: ?*anyopaque, max_balls: usize) !void {
+    fn initChamber(ctx: ?*anyopaque, max_balls: usize, max_canvas_pixels: usize) !void {
         const self: *WasmChamber = @ptrCast(@alignCast(ctx));
 
-        try wasmCall(void, self.context, &self.init_fn, .{ max_balls, 0 });
+        try self.addFuel(self.init_fuel_limit);
+        try wasmCall(void, self.context, &self.init_fn, .{ max_balls, max_canvas_pixels });
     }
 
     fn load(ctx: ?*anyopaque, data: []const u8) !void {
         const self: *WasmChamber = @ptrCast(@alignCast(ctx));
+
+        try self.addFuel(self.step_fuel_limit);
 
         const wasm_ptr = try self.saveMemory();
         const wasm_offs = std.math.cast(usize, wasm_ptr) orelse {
@@ -133,6 +167,8 @@ pub const WasmChamber = struct {
     fn save(ctx: ?*anyopaque, alloc: Allocator) ![]const u8 {
         const self: *WasmChamber = @ptrCast(@alignCast(ctx));
         var trap: ?*c.wasm_trap_t = null;
+
+        try self.addFuel(self.step_fuel_limit);
 
         const err =
             c.wasmtime_func_call(self.context, &self.save_fn, null, 0, null, 0, &trap);
@@ -160,6 +196,8 @@ pub const WasmChamber = struct {
     fn step(ctx: ?*anyopaque, balls: []Ball, delta: f32) !void {
         const self: *WasmChamber = @ptrCast(@alignCast(ctx));
 
+        try self.addFuel(self.step_fuel_limit);
+
         const balls_ptr = try self.ballsMemory();
 
         const offs: usize = @intCast(balls_ptr);
@@ -170,6 +208,22 @@ pub const WasmChamber = struct {
         try wasmCall(void, self.context, &self.step_fn, .{ balls.len, delta });
 
         @memcpy(balls, wasm_balls[0..balls.len]);
+    }
+
+    pub fn render(self: *WasmChamber, width: usize, height: usize) !void {
+        try self.addFuel(self.render_fuel_limit);
+        try wasmCall(void, self.context, &self.render_fn, .{ width, height });
+    }
+
+    fn addFuel(self: *WasmChamber, limit: u64) !void {
+        if (limit == 0) {
+            return;
+        }
+
+        if (c.wasmtime_context_set_fuel(self.context, limit) != null) {
+            std.log.err("Failed to set module fuel\n", .{});
+            return error.InitFailure;
+        }
     }
 };
 

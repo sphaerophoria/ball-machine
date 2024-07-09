@@ -22,7 +22,7 @@ fn myLog(
 }
 
 const c = struct {
-    extern fn initChamber(max_balls: usize) bool;
+    extern fn initChamber(max_balls: usize, max_pixels: usize) bool;
     extern fn stepChamber(balls_ptr: ?*anyopaque, byte_len: usize, num_balls: usize, delta: f32) void;
     extern fn logWasm(s: [*]u8, len: usize) void;
 };
@@ -36,8 +36,8 @@ fn print(comptime fmt: []const u8, args: anytype) void {
     c.logWasm(to_print.ptr, to_print.len);
 }
 
-fn initChamber(_: ?*anyopaque, max_balls: usize) anyerror!void {
-    if (c.initChamber(max_balls) == false) {
+fn initChamber(_: ?*anyopaque, max_balls: usize, max_pixels: usize) anyerror!void {
+    if (c.initChamber(max_balls, max_pixels) == false) {
         return error.InitFailed;
     }
 }
@@ -67,8 +67,8 @@ var simulation: Simulation = undefined;
 var scheduler: SimulationScheduler = .{};
 var last_time: f32 = 0.0;
 
-pub export fn init(seed: usize) void {
-    simulation = Simulation.init(std.heap.wasm_allocator, seed) catch {
+pub export fn init(seed: usize, canvas_max_pixels: usize) void {
+    simulation = Simulation.init(std.heap.wasm_allocator, seed, canvas_max_pixels) catch {
         unreachable;
     };
 
