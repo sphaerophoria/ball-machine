@@ -66,6 +66,7 @@ pub const WasmLoader = struct {
         };
     }
 };
+
 pub const WasmChamber = struct {
     alloc: Allocator,
     store: *c.wasmtime_store_t,
@@ -103,26 +104,12 @@ pub const WasmChamber = struct {
 
     fn initChamber(ctx: ?*anyopaque, max_balls: usize) !void {
         const self: *WasmChamber = @ptrCast(@alignCast(ctx));
-        var trap: ?*c.wasm_trap_t = null;
 
-        var inputs: [2]c.wasmtime_val_t = undefined;
-        inputs[0].kind = c.WASMTIME_I32;
-        inputs[0].of.i32 = @intCast(max_balls);
-
-        inputs[1].kind = c.WASMTIME_I32;
-        inputs[1].of.i32 = 0;
-
-        const err =
-            c.wasmtime_func_call(self.context, &self.init_fn, &inputs, 2, null, 0, &trap);
-
-        if (err != null or trap != null) {
-            return error.InternalError;
-        }
+        try wasmCall(void, self.context, &self.init_fn, .{ max_balls, 0 });
     }
 
     fn load(ctx: ?*anyopaque, data: []const u8) !void {
         const self: *WasmChamber = @ptrCast(@alignCast(ctx));
-        var trap: ?*c.wasm_trap_t = null;
 
         const wasm_ptr = try self.saveMemory();
         const wasm_offs = std.math.cast(usize, wasm_ptr) orelse {
@@ -132,50 +119,15 @@ pub const WasmChamber = struct {
         const wasm_data = try getWasmSlice(self.context, self.memory, wasm_offs, data.len);
         @memcpy(wasm_data, data);
 
-        const err =
-            c.wasmtime_func_call(self.context, &self.load_fn, null, 0, null, 0, &trap);
-
-        if (err != null or trap != null) {
-            return error.InternalError;
-        }
+        try wasmCall(void, self.context, &self.load_fn, .{});
     }
 
     pub fn saveSize(self: *WasmChamber) !i32 {
-        var trap: ?*c.wasm_trap_t = null;
-
-        var result: c.wasmtime_val_t = undefined;
-
-        const err =
-            c.wasmtime_func_call(self.context, &self.save_size_fn, null, 0, &result, 1, &trap);
-
-        if (err != null or trap != null) {
-            return error.InternalError;
-        }
-
-        if (result.kind != c.WASMTIME_I32) {
-            return error.InvalidResult;
-        }
-
-        return result.of.i32;
+        return wasmCall(i32, self.context, &self.save_size_fn, .{});
     }
 
     fn saveMemory(self: *WasmChamber) !i32 {
-        var trap: ?*c.wasm_trap_t = null;
-
-        var result: c.wasmtime_val_t = undefined;
-
-        const err =
-            c.wasmtime_func_call(self.context, &self.save_memory_fn, null, 0, &result, 1, &trap);
-
-        if (err != null or trap != null) {
-            return error.InternalError;
-        }
-
-        if (result.kind != c.WASMTIME_I32) {
-            return error.InvalidResult;
-        }
-
-        return result.of.i32;
+        return wasmCall(i32, self.context, &self.save_memory_fn, .{});
     }
 
     fn save(ctx: ?*anyopaque, alloc: Allocator) ![]const u8 {
@@ -202,27 +154,11 @@ pub const WasmChamber = struct {
     }
 
     fn ballsMemory(self: *WasmChamber) !i32 {
-        var trap: ?*c.wasm_trap_t = null;
-
-        var result: c.wasmtime_val_t = undefined;
-
-        const err =
-            c.wasmtime_func_call(self.context, &self.balls_memory_fn, null, 0, &result, 1, &trap);
-
-        if (err != null or trap != null) {
-            return error.InternalError;
-        }
-
-        if (result.kind != c.WASMTIME_I32) {
-            return error.InvalidResult;
-        }
-
-        return result.of.i32;
+        return wasmCall(i32, self.context, &self.balls_memory_fn, .{});
     }
 
     fn step(ctx: ?*anyopaque, balls: []Ball, delta: f32) !void {
         const self: *WasmChamber = @ptrCast(@alignCast(ctx));
-        var trap: ?*c.wasm_trap_t = null;
 
         const balls_ptr = try self.ballsMemory();
 
@@ -231,23 +167,74 @@ pub const WasmChamber = struct {
         const wasm_balls: []Ball = @alignCast(std.mem.bytesAsSlice(Ball, wasm_balls_data));
         @memcpy(wasm_balls[0..balls.len], balls);
 
-        var inputs: [2]c.wasmtime_val_t = undefined;
-        inputs[0].kind = c.WASMTIME_I32;
-        inputs[0].of.i32 = @intCast(balls.len);
-
-        inputs[1].kind = c.WASMTIME_F32;
-        inputs[1].of.f32 = delta;
-
-        const err =
-            c.wasmtime_func_call(self.context, &self.step_fn, &inputs, 2, null, 0, &trap);
-
-        if (err != null or trap != null) {
-            return error.InternalError;
-        }
+        try wasmCall(void, self.context, &self.step_fn, .{ balls.len, delta });
 
         @memcpy(balls, wasm_balls[0..balls.len]);
     }
 };
+
+fn wasmCall(comptime Ret: type, context: *c.wasmtime_context_t, f: *c.wasmtime_func_t, args: anytype) !Ret {
+    const fields = std.meta.fields(@TypeOf(args));
+
+    var inputs: [fields.len]c.wasmtime_val_t = undefined;
+    inline for (fields, 0..) |field, i| {
+        switch (@typeInfo(field.type)) {
+            .Int, .ComptimeInt => {
+                inputs[i].kind = c.WASMTIME_I32;
+                inputs[i].of.i32 = std.math.cast(i32, @field(args, field.name)) orelse {
+                    return error.InvalidCast;
+                };
+            },
+            .Float, .ComptimeFloat => {
+                inputs[i].kind = c.WASMTIME_F32;
+                inputs[i].of.f32 = @field(args, field.name);
+            },
+            else => {
+                @compileError("Arg of type " ++ @typeName(field.type) ++ " is not handled");
+            },
+        }
+    }
+
+    var result: c.wasmtime_val_t = undefined;
+    var result_len: usize = 0;
+    switch (@typeInfo(Ret)) {
+        .Void => {},
+        else => {
+            result_len = 1;
+        },
+    }
+
+    var trap: ?*c.wasm_trap_t = null;
+    const err = c.wasmtime_func_call(context, f, &inputs, inputs.len, &result, result_len, &trap);
+    if (trap != null) {
+        var message: c.wasm_byte_vec_t = undefined;
+        defer c.wasm_byte_vec_delete(&message);
+
+        c.wasm_trap_message(trap, &message);
+        std.log.err("wasm trap: {s}", .{message.data[0..message.size]});
+        return error.InternalError;
+    }
+
+    if (err != null) {
+        return error.InternalError;
+    }
+
+    switch (@typeInfo(Ret)) {
+        .Void => {
+            return;
+        },
+        .Int => {
+            if (result.kind != c.WASMTIME_I32) {
+                return error.InvalidResult;
+            }
+
+            return result.of.i32;
+        },
+        else => {
+            @compileError("Return of type " ++ @typeName(Ret) ++ " is not handled");
+        },
+    }
+}
 
 fn logWasm(env: ?*anyopaque, caller: ?*c.wasmtime_caller_t, args: ?[*]const c.wasmtime_val_t, nargs: usize, results: ?[*]c.wasmtime_val_t, nresults: usize) callconv(.C) ?*c.wasm_trap_t {
     _ = nargs;
