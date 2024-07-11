@@ -331,11 +331,9 @@ const Connection = struct {
                 };
                 return try http.Writer.init(self.server.alloc, response_header, response_body, true);
             },
-            .simulation_state => {
-                const simulation = &self.server.server_sim.simulation;
-
-                var serializer = try SimulationStateSerializer.init(self.server.alloc, simulation);
-                defer serializer.deinit();
+            .simulation_state => |since| {
+                var it = self.server.server_sim.history.iter();
+                const serializer = SimulationStateSerializer{ .it = &it, .since = since };
 
                 var out_buf = try std.ArrayList(u8).initCapacity(self.server.alloc, 4096);
                 errdefer out_buf.deinit();
@@ -573,71 +571,19 @@ const Connection = struct {
 };
 
 const SimulationStateSerializer = struct {
-    alloc: Allocator,
-    chamber_balls: std.ArrayListUnmanaged(Simulation.ChamberBalls) = .{},
-    chamber_saves: std.ArrayListUnmanaged([]const u8) = .{},
-
-    pub fn init(alloc: Allocator, simulation: *const Simulation) !SimulationStateSerializer {
-        var ret = SimulationStateSerializer{
-            .alloc = alloc,
-        };
-        errdefer ret.deinit();
-
-        try ret.populate(simulation);
-        return ret;
-    }
-
-    pub fn deinit(self: *SimulationStateSerializer) void {
-        for (self.chamber_balls.items) |*item| {
-            item.deinit(self.alloc);
-        }
-        self.chamber_balls.deinit(self.alloc);
-
-        for (self.chamber_saves.items) |save| {
-            self.alloc.free(save);
-        }
-        self.chamber_saves.deinit(self.alloc);
-    }
+    it: *ServerSimulation.SnapshotHistory.Iter,
+    since: u64,
 
     pub fn jsonStringify(self: *const SimulationStateSerializer, writer: anytype) @TypeOf(writer.*).Error!void {
-        try writer.beginObject();
-        try writer.objectField("chamber_balls");
-        {
-            try writer.beginArray();
+        try writer.beginArray();
 
-            for (self.chamber_balls.items) |item| {
-                try writer.write(item.items(.adjusted));
-            }
-
-            try writer.endArray();
-        }
-
-        try writer.objectField("chamber_states");
-        {
-            try writer.beginArray();
-            for (self.chamber_saves.items) |item| {
+        while (self.it.next()) |item| {
+            if (item.num_steps_taken > self.since) {
                 try writer.write(item);
             }
-            try writer.endArray();
         }
 
-        try writer.endObject();
-    }
-
-    fn populate(self: *SimulationStateSerializer, simulation: *const Simulation) !void {
-        for (0..simulation.numChambers()) |chamber_idx| {
-            var this_chamber_balls = try simulation.getChamberBalls(self.alloc, chamber_idx);
-            errdefer this_chamber_balls.deinit(self.alloc);
-
-            if (chamber_idx < simulation.chambers.items.len) {
-                // Probably a violation of abstraction?
-                const chamber_save = try simulation.chambers.items[chamber_idx].save(self.alloc);
-                errdefer self.alloc.free(chamber_save);
-                try self.chamber_saves.append(self.alloc, chamber_save);
-            }
-
-            try self.chamber_balls.append(self.alloc, this_chamber_balls);
-        }
+        try writer.endArray();
     }
 };
 
@@ -794,7 +740,7 @@ const AdminUrlPurpose = union(enum) {
 const UrlPurpose = union(enum) {
     admin: AdminUrlPurpose,
     init_info: void,
-    simulation_state: void,
+    simulation_state: u64,
     get_chamber: i64,
     login_redirect: void,
     login_code: []const u8,
@@ -827,10 +773,10 @@ const UrlPurpose = union(enum) {
         return null;
     }
 
-    fn extractCodeFromQueryParams(target: []const u8) ?[]const u8 {
+    fn extractStringFromQueryParams(target: []const u8, key: []const u8) ?[]const u8 {
         var it = http.QueryParamsIt.init(target);
         while (it.next()) |param| {
-            if (std.mem.eql(u8, param.key, "code")) {
+            if (std.mem.eql(u8, param.key, key)) {
                 return param.val;
             }
         }
@@ -839,14 +785,10 @@ const UrlPurpose = union(enum) {
     }
 
     fn extractIdFromQueryParams(target: []const u8) !?i64 {
-        var it = http.QueryParamsIt.init(target);
-        while (it.next()) |param| {
-            if (std.mem.eql(u8, param.key, "id")) {
-                return try std.fmt.parseInt(i64, param.val, 10);
-            }
-        }
-
-        return null;
+        const id_s = extractStringFromQueryParams(target, "id") orelse {
+            return null;
+        };
+        return try std.fmt.parseInt(i64, id_s, 10);
     }
 
     const NonIndexedTargetOption = enum {
@@ -866,6 +808,7 @@ const UrlPurpose = union(enum) {
         @"/login_code",
         @"/accept_chamber",
         @"/reject_chamber",
+        @"/simulation_state",
 
         fn parse(target: []const u8) ?QueryParamOptions {
             inline for (std.meta.fields(QueryParamOptions)) |field| {
@@ -919,7 +862,7 @@ const UrlPurpose = union(enum) {
                     return UrlPurpose{ .init_info = {} };
                 },
                 .@"/simulation_state" => {
-                    return UrlPurpose{ .simulation_state = {} };
+                    return UrlPurpose{ .simulation_state = 0 };
                 },
                 .@"/unaccepted_chambers" => {
                     return UrlPurpose{ .unaccepted_chambers = {} };
@@ -930,7 +873,7 @@ const UrlPurpose = union(enum) {
         if (QueryParamOptions.parse(target)) |opt| {
             switch (opt) {
                 .@"/login_code" => {
-                    const code = extractCodeFromQueryParams(target) orelse {
+                    const code = extractStringFromQueryParams(target, "code") orelse {
                         return error.NoCode;
                     };
 
@@ -951,6 +894,12 @@ const UrlPurpose = union(enum) {
                     };
 
                     return UrlPurpose{ .admin = .{ .reject_chamber = id } };
+                },
+                .@"/simulation_state" => {
+                    const since_s = extractStringFromQueryParams(target, "since") orelse "0";
+                    const since = try std.fmt.parseInt(u64, since_s, 10);
+
+                    return UrlPurpose{ .simulation_state = since };
                 },
             }
         }

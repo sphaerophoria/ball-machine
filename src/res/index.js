@@ -56,7 +56,10 @@ class ChamberRegistry {
     this.parent = parent;
     this.chambers = [];
     this.chamber_height = chamber_height;
+    this.simulation_queue = [];
+    this.last_step = 0;
     this.relayout(chamber_ids, chambers_per_row);
+    this.updateQueue();
     this.render();
   }
 
@@ -81,14 +84,27 @@ class ChamberRegistry {
     }
   }
 
-  async render() {
-    const simulation_response = await fetch("/simulation_state");
-    const simulation_state = await simulation_response.json();
-
-    for (const chamber of this.chambers) {
-      chamber.render(simulation_state);
+  async updateQueue() {
+    if (this.simulation_queue.length < 30) {
+      const simulation_response = await fetch(
+        "/simulation_state?since=" + this.last_step,
+      );
+      const new_elems = await simulation_response.json();
+      this.simulation_queue = [...this.simulation_queue, ...new_elems];
+      this.last_step =
+        this.simulation_queue[this.simulation_queue.length - 1].num_steps_taken;
     }
+    window.setTimeout(() => this.updateQueue(), 100);
+  }
+
+  async render() {
+    const simulation = this.simulation_queue.shift();
     window.setTimeout(() => this.render(), 16);
+    if (simulation !== undefined) {
+      for (const chamber of this.chambers) {
+        chamber.render(simulation);
+      }
+    }
   }
 }
 

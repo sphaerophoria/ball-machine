@@ -89,8 +89,15 @@ def fetch_chambers(chamber_ids):
 
 def get_lots_of_simulation_states():
     # Hammer the simulation state a little harder to simulate real life usage
+    last_state = 0
+    simulation_states = json.loads(get(f"/simulation_state"))
+    if len(simulation_states) > 0:
+        last_state = simulation_states[-1]["num_steps_taken"]
+
     for _ in range(0, 60):
-        get(f"/simulation_state")
+        simulation_states = json.loads(get(f"/simulation_state?since={last_state}"))
+        if len(simulation_states) > 0:
+            last_state = simulation_states[-1]["num_steps_taken"]
 
 
 def upload_module(name):
