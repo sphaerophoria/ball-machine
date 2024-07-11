@@ -5,7 +5,7 @@ const Allocator = std.mem.Allocator;
 const TcpServer = @import("TcpServer.zig");
 const Server = @import("Server.zig");
 const EventLoop = @import("EventLoop.zig");
-const App = @import("App.zig");
+const ServerSimulation = @import("ServerSimulation.zig");
 const Db = @import("Db.zig");
 const TimerEvent = @import("TimerEvent.zig");
 
@@ -212,11 +212,11 @@ const SignalHandler = struct {
     }
 };
 
-const AppRunner = struct {
+const ServerSimulationRunner = struct {
     inner: TimerEvent,
-    app: *App,
+    app: *ServerSimulation,
 
-    fn init(app: *App) !AppRunner {
+    fn init(app: *ServerSimulation) !ServerSimulationRunner {
         var inner = try TimerEvent.init();
         try inner.setInterval(1_666_666);
         return .{
@@ -225,20 +225,20 @@ const AppRunner = struct {
         };
     }
 
-    fn deinit(self: *AppRunner) void {
+    fn deinit(self: *ServerSimulationRunner) void {
         self.inner.deinit();
     }
 
-    fn handler(self: *AppRunner) EventLoop.EventHandler {
+    fn handler(self: *ServerSimulationRunner) EventLoop.EventHandler {
         _ = self.poll();
         return .{
             .data = self,
-            .callback = EventLoop.EventHandler.makeCallback(AppRunner, poll),
+            .callback = EventLoop.EventHandler.makeCallback(ServerSimulationRunner, poll),
             .deinit = null,
         };
     }
 
-    fn poll(self: *AppRunner) EventLoop.HandlerAction {
+    fn poll(self: *ServerSimulationRunner) EventLoop.HandlerAction {
         const num_triggers = self.inner.poll() catch {
             std.log.err("Timer failed", .{});
             return .server_shutdown;
@@ -281,7 +281,7 @@ pub fn main() !void {
     var db_chambers = try db.getAcceptedChambers(alloc);
     defer db_chambers.deinit(alloc);
 
-    var app = try App.init(alloc, db_chambers.items);
+    var app = try ServerSimulation.init(alloc, db_chambers.items);
     defer app.deinit();
 
     var event_loop = try EventLoop.init(alloc);
@@ -289,7 +289,7 @@ pub fn main() !void {
 
     try event_loop.register(signal_handler.fd, signal_handler.handler());
 
-    var app_runner = try AppRunner.init(&app);
+    var app_runner = try ServerSimulationRunner.init(&app);
     defer app_runner.deinit();
 
     try event_loop.register(app_runner.inner.fd, app_runner.handler());

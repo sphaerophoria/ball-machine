@@ -8,7 +8,7 @@ const Db = @import("Db.zig");
 const ChamberIds = std.ArrayListUnmanaged(Db.ChamberId);
 const ChamberMods = std.ArrayListUnmanaged(*wasm_chamber.WasmChamber);
 
-const App = @This();
+const ServerSimulation = @This();
 
 alloc: Allocator,
 wasm_loader: wasm_chamber.WasmLoader,
@@ -18,7 +18,7 @@ simulation: Simulation,
 new_chamber_idx: usize = 0,
 start: std.time.Instant,
 
-pub fn init(alloc: Allocator, chambers: []const Db.Chamber) !App {
+pub fn init(alloc: Allocator, chambers: []const Db.Chamber) !ServerSimulation {
     var ret = try initEmpty(alloc, chambers.len);
     errdefer ret.deinit();
 
@@ -29,7 +29,7 @@ pub fn init(alloc: Allocator, chambers: []const Db.Chamber) !App {
     return ret;
 }
 
-fn initEmpty(alloc: Allocator, capacity: usize) !App {
+fn initEmpty(alloc: Allocator, capacity: usize) !ServerSimulation {
     var wasm_loader = try wasm_chamber.WasmLoader.init();
     errdefer wasm_loader.deinit();
 
@@ -45,7 +45,7 @@ fn initEmpty(alloc: Allocator, capacity: usize) !App {
     var chamber_ids = try ChamberIds.initCapacity(alloc, capacity);
     errdefer chamber_ids.deinit(alloc);
 
-    return App{
+    return ServerSimulation{
         .alloc = alloc,
         .wasm_loader = wasm_loader,
         .chamber_ids = chamber_ids,
@@ -55,14 +55,14 @@ fn initEmpty(alloc: Allocator, capacity: usize) !App {
     };
 }
 
-pub fn deinit(self: *App) void {
+pub fn deinit(self: *ServerSimulation) void {
     self.chamber_ids.deinit(self.alloc);
     deinitChamberMods(self.alloc, &self.chamber_mods);
     self.simulation.deinit();
     self.wasm_loader.deinit();
 }
 
-pub fn step(self: *App) !void {
+pub fn step(self: *ServerSimulation) !void {
     const now = try std.time.Instant.now();
     const elapsed_time_ns = now.since(self.start);
 
@@ -73,7 +73,7 @@ pub fn step(self: *App) !void {
     }
 }
 
-pub fn appendChamber(self: *App, chamber_id: Db.ChamberId, data: []const u8) !void {
+pub fn appendChamber(self: *ServerSimulation, chamber_id: Db.ChamberId, data: []const u8) !void {
     const chamber = try self.alloc.create(wasm_chamber.WasmChamber);
     errdefer self.alloc.destroy(chamber);
     chamber.* = try self.wasm_loader.load(self.alloc, data);

@@ -11,14 +11,14 @@ const physics = @import("physics.zig");
 const future = @import("future.zig");
 const Ball = physics.Ball;
 const ConnectionSpawner = @import("TcpServer.zig").ConnectionSpawner;
-const App = @import("App.zig");
+const ServerSimulation = @import("ServerSimulation.zig");
 const Db = @import("Db.zig");
 
 const Server = @This();
 
 alloc: Allocator,
 www_root: ?[]const u8,
-app: *App,
+server_sim: *ServerSimulation,
 admin_id: []const u8,
 client_id: []const u8,
 auth_request_thread: *AuthRequestThread,
@@ -30,7 +30,7 @@ db: *Db,
 pub fn init(
     alloc: Allocator,
     www_root: ?[]const u8,
-    app: *App,
+    server_sim: *ServerSimulation,
     admin_id: []const u8,
     client_id: []const u8,
     client_secret: []const u8,
@@ -56,7 +56,7 @@ pub fn init(
     return Server{
         .alloc = alloc,
         .www_root = www_root,
-        .app = app,
+        .server_sim = server_sim,
         .admin_id = admin_id,
         .client_id = trimmed_id,
         .auth = auth,
@@ -229,7 +229,7 @@ const Connection = struct {
                 if (chambers_per_row < 1) {
                     return error.Invalid;
                 }
-                self.server.app.simulation.setChambersPerRow(chambers_per_row);
+                self.server.server_sim.simulation.setChambersPerRow(chambers_per_row);
                 const response_header = http.Header{
                     .status = .ok,
                     .content_type = .@"application/json",
@@ -240,7 +240,7 @@ const Connection = struct {
             .set_num_balls => {
                 const num_balls = try std.fmt.parseInt(usize, reader.buf.items, 10);
 
-                try self.server.app.simulation.setNumBalls(num_balls);
+                try self.server.server_sim.simulation.setNumBalls(num_balls);
                 const response_header = http.Header{
                     .status = .ok,
                     .content_type = .@"application/json",
@@ -249,7 +249,7 @@ const Connection = struct {
                 return try http.Writer.init(self.server.alloc, response_header, "", false);
             },
             .reset => {
-                const simulation = &self.server.app.simulation;
+                const simulation = &self.server.server_sim.simulation;
                 simulation.reset();
                 const response_header = http.Header{
                     .status = .ok,
@@ -264,7 +264,7 @@ const Connection = struct {
                 var chamber = try self.server.db.getChamber(self.server.alloc, id);
                 defer chamber.deinit(self.server.alloc);
 
-                try self.server.app.appendChamber(id, chamber.data);
+                try self.server.server_sim.appendChamber(id, chamber.data);
 
                 try self.server.db.acceptChamber(id);
                 const response_header = http.Header{
@@ -304,16 +304,16 @@ const Connection = struct {
                 };
 
                 comptime {
-                    const ChamberId = @typeInfo(@TypeOf(self.server.app.chamber_ids).Slice).Pointer.child;
+                    const ChamberId = @typeInfo(@TypeOf(self.server.server_sim.chamber_ids).Slice).Pointer.child;
                     std.debug.assert(@alignOf(ChamberId) == @alignOf(usize));
                     std.debug.assert(@sizeOf(ChamberId) == @sizeOf(usize));
                 }
 
                 const init_info = InitInfo{
                     .chamber_height = Simulation.chamber_height,
-                    .chambers_per_row = self.server.app.simulation.chambers_per_row,
-                    .num_balls = self.server.app.simulation.balls.items.len,
-                    .chamber_ids = std.mem.bytesAsSlice(usize, std.mem.sliceAsBytes(self.server.app.chamber_ids.items)),
+                    .chambers_per_row = self.server.server_sim.simulation.chambers_per_row,
+                    .num_balls = self.server.server_sim.simulation.balls.items.len,
+                    .chamber_ids = std.mem.bytesAsSlice(usize, std.mem.sliceAsBytes(self.server.server_sim.chamber_ids.items)),
                 };
 
                 var out_buf = try std.ArrayList(u8).initCapacity(self.server.alloc, 4096);
@@ -332,7 +332,7 @@ const Connection = struct {
                 return try http.Writer.init(self.server.alloc, response_header, response_body, true);
             },
             .simulation_state => {
-                const simulation = &self.server.app.simulation;
+                const simulation = &self.server.server_sim.simulation;
 
                 var serializer = try SimulationStateSerializer.init(self.server.alloc, simulation);
                 defer serializer.deinit();
