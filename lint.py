@@ -37,7 +37,6 @@ def main():
                 "valgrind",
                 "--suppressions=suppressions.valgrind",
                 "--leak-check=full",
-                "--track-origins=yes",
                 "--track-fds=yes",
                 "--error-exitcode=1",
                 "./zig-out/bin/ball-machine",
