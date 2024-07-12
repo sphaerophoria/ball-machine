@@ -246,7 +246,9 @@ const Builder = struct {
     fn addZigChamber(self: *Builder, name: []const u8, path: []const u8) *Step.Compile {
         const chamber = self.wasmExe(name, path);
         self.modules.linkPhysics(chamber);
-        self.b.installArtifact(chamber);
+        const install_chamber = self.b.addInstallArtifact(chamber, .{});
+        self.steps.chambers.dependOn(&install_chamber.step);
+        self.steps.install.dependOn(&install_chamber.step);
         self.steps.check.dependOn(&chamber.step);
         return chamber;
     }
@@ -255,7 +257,9 @@ const Builder = struct {
         const chamber = self.wasmExeC(name, path);
         self.wasm_libs.linkPhysics(chamber);
         chamber.root_module.export_symbol_names = &.{ "init", "saveMemory", "ballsMemory", "canvasMemory", "save", "load", "step", "render", "saveSize" };
-        self.b.installArtifact(chamber);
+        const install_chamber = self.b.addInstallArtifact(chamber, .{});
+        self.steps.chambers.dependOn(&install_chamber.step);
+        self.steps.install.dependOn(&install_chamber.step);
         self.steps.check.dependOn(&chamber.step);
     }
 
@@ -263,7 +267,9 @@ const Builder = struct {
         const output_bin_name = name ++ ".wasm";
         const output = runCargo(self.b, self.options, path, output_bin_name, "wasm32-unknown-unknown", &.{});
         output.generated.file.step.dependOn(&self.wasm_libs.physics_install.step);
-        self.b.getInstallStep().dependOn(&self.b.addInstallBinFile(output, output_bin_name).step);
+        const install_chamber = self.b.addInstallBinFile(output, output_bin_name);
+        self.steps.chambers.dependOn(&install_chamber.step);
+        self.steps.install.dependOn(&install_chamber.step);
     }
 };
 
