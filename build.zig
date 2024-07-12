@@ -196,6 +196,13 @@ const Builder = struct {
         });
     }
 
+    fn setWasmExeParams(exe: *Step.Compile) void {
+        exe.entry = .disabled;
+        exe.rdynamic = true;
+        // Limit stack size to keep overall required memory usage lower
+        exe.stack_size = 16384;
+    }
+
     fn wasmExe(self: *Builder, name: []const u8, path: []const u8) *Step.Compile {
         const ret = self.b.addExecutable(.{
             .name = name,
@@ -203,10 +210,7 @@ const Builder = struct {
             .target = self.options.wasm_target,
             .optimize = self.options.opt,
         });
-        ret.entry = .disabled;
-        ret.rdynamic = true;
-        // Limit stack size to keep overall required memory usage lower
-        ret.stack_size = 16384;
+        setWasmExeParams(ret);
         return ret;
     }
 
@@ -217,8 +221,8 @@ const Builder = struct {
             .target = self.options.wasm_target,
             .optimize = self.options.opt,
         });
-        ret.entry = .disabled;
-        ret.rdynamic = true;
+
+        setWasmExeParams(ret);
 
         ret.addCSourceFile(.{
             .file = self.b.path(path),

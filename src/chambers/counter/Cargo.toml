@@ -13,3 +13,9 @@ crate-type = ["cdylib"]
 
 [build-dependencies]
 bindgen = "0.69.4"
+
+[profile.release]
+lto = true
+opt-level = 's'
+debug = false
+strip = "symbols"
