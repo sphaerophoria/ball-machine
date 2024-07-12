@@ -49,9 +49,7 @@ pub export fn saveSize() usize {
 
 pub export fn save() void {}
 
-pub export fn load() ?*State {
-    return null;
-}
+pub export fn load() void {}
 
 pub export fn step(num_balls: usize, delta: f32) void {
     for (0..num_balls) |i| {

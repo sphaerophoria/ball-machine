@@ -5,6 +5,8 @@ import signal
 import tempfile
 import sys
 
+from pathlib import Path
+
 process = None
 
 
@@ -28,6 +30,10 @@ def main():
     subprocess.run(["zig", "build", "--summary", "all"], check=True)
     subprocess.run(["zig", "build", "test"], check=True)
     subprocess.run(["zig", "build", "-Doptimize=ReleaseSafe"], check=True)
+    subprocess.run(["zig", "build", "chambers", "-Doptimize=ReleaseSmall"], check=True)
+
+    for chamber_path in Path("./zig-out/bin/").glob("*.wasm"):
+        subprocess.run(["./zig-out/bin/test_chamber", str(chamber_path)], check=True)
 
     with tempfile.TemporaryDirectory() as d:
         subprocess.run(["./zig-out/bin/generate_test_db", str(d)], check=True)

@@ -11,7 +11,7 @@ loader: wasm_chamber.WasmLoader,
 fn getStepFuelLimit() comptime_int {
     return switch (builtin.mode) {
         .Debug => 2_500_000,
-        else => 50_000,
+        else => 800_000, // On my machine, somewhere between 200-400K is ~65us
     };
 }
 
