@@ -82,6 +82,10 @@ pub export fn step(num_balls: usize, delta: f32) void {
     state.angle += rotation_this_frame;
     state.angle = @mod(state.angle, std.math.pi * 2.0);
 
+    for (balls) |*ball| {
+        physics.applyGravity(ball, delta);
+    }
+
     const surface = state.surface();
     const inverse_surface: Surface = .{
         .a = surface.b,
@@ -92,6 +96,7 @@ pub export fn step(num_balls: usize, delta: f32) void {
     for (surfaces) |obj| {
         for (0..num_balls) |i| {
             const ball = &balls[i];
+
             const obj_normal = obj.normal();
 
             const ball_collision_point_offs = obj_normal.mul(-ball.r);

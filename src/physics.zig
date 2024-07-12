@@ -256,3 +256,8 @@ pub fn applyBallCollision(a: *Ball, b: *Ball) void {
         a.pos = a.pos.add(n.mul(-overlap / 2.0));
     }
 }
+
+pub fn applyGravity(ball: *Ball, delta: f32) void {
+    const G = -9.832;
+    ball.velocity.y += G * delta;
+}

@@ -64,7 +64,6 @@ pub fn step(self: *Simulation) !void {
 
     for (0..self.balls.items.len) |i| {
         const ball = &self.balls.items[i];
-        applyGravity(ball, step_len_s);
         clampSpeed(ball);
         applyVelocity(ball, step_len_s);
     }
@@ -79,6 +78,10 @@ pub fn step(self: *Simulation) !void {
 
         if (chamber_idx < self.chambers.items.len) {
             try self.chambers.items[chamber_idx].step(chamber_balls_slice.items(.adjusted), step_len_s);
+        } else {
+            for (chamber_balls_slice.items(.adjusted)) |*ball| {
+                physics.applyGravity(ball, step_len_s);
+            }
         }
 
         for (0..chamber_balls_slice.len) |k| {
@@ -181,11 +184,6 @@ fn chamberLayout(self: Simulation) ChamberLayout {
         .chambers_per_row = self.chambers_per_row,
         .num_chambers = self.numChambers(),
     };
-}
-
-fn applyGravity(ball: *Ball, delta: f32) void {
-    const G = -9.832;
-    ball.velocity.y += G * delta;
 }
 
 fn clampSpeed(ball: *Ball) void {

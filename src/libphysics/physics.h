@@ -40,3 +40,4 @@ struct vec2 surface_normal(const struct surface* surface);
 void surface_push_if_colliding(const struct surface* surface, struct ball* ball, const struct vec2* obj_velocity, float delta, float max_push);
 void apply_ball_collision(struct ball* ball, const struct vec2* resolution, const struct vec2* obj_normal, const struct vec2* obj_velocity, float delta, float elasticity);
 void apply_ball_ball_collision(struct ball* a, struct ball* b);
+void apply_gravity(struct ball* ball, float delta);

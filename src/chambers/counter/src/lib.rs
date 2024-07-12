@@ -284,7 +284,10 @@ pub fn step(num_balls: usize, delta: f32) {
         let mut ball_collision_point = ball.pos;
         ball_collision_point.y -= ball.r;
 
+
         unsafe {
+            physics::apply_gravity(ball, delta);
+
             let mut resolution = MaybeUninit::uninit();
             let collided = physics::surface_collision_resolution(
                 &surface,

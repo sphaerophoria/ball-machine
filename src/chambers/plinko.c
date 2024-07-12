@@ -90,6 +90,11 @@ struct pos2 pegLoc(int i) {
 
 void step(size_t num_balls, float delta) {
   int peg_idx = 0;
+  for (size_t ball_idx = 0; ball_idx < num_balls; ++ball_idx) {
+    struct ball* ball = &balls_memory[ball_idx];
+    apply_gravity(ball, delta);
+  }
+
   while (true) {
     const struct pos2 peg_pos = pegLoc(peg_idx++);
     if (peg_pos.y > PEG_Y_MAX) {
@@ -98,6 +103,7 @@ void step(size_t num_balls, float delta) {
 
     for (size_t ball_idx = 0; ball_idx < num_balls; ++ball_idx) {
       struct ball* ball = &balls_memory[ball_idx];
+
       const struct vec2 offs = pos2_sub(&ball->pos, &peg_pos);
       float const diff = vec2_length(&offs);
       float const combined_r = PEG_RADIUS + ball->r;

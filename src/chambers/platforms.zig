@@ -100,6 +100,11 @@ pub export fn load() void {
 
 pub export fn step(num_balls: usize, delta: f32) void {
     const speed = 1.0;
+
+    for (balls[0..num_balls]) |*ball| {
+        physics.applyGravity(ball, delta);
+    }
+
     for (0..num_platforms) |i| {
         var movement = speed * delta;
 

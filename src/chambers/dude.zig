@@ -104,6 +104,8 @@ pub export fn step(num_balls: usize, delta: f32) void {
 
     for (0..num_balls) |i| {
         const ball = &balls[i];
+        physics.applyGravity(ball, delta);
+
         const obj_normal = platform.normal();
         const ball_collision_point_offs = obj_normal.mul(-ball.r);
         const ball_collision_point = ball.pos.add(ball_collision_point_offs);

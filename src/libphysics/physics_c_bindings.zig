@@ -116,3 +116,7 @@ pub export fn apply_ball_collision(ball: *Ball, resolution: *const Vec2, obj_nor
 pub export fn apply_ball_ball_collision(a: *Ball, b: *Ball) void {
     physics.applyBallCollision(a, b);
 }
+
+pub export fn apply_gravity(ball: *Ball, delta: f32) void {
+    physics.applyGravity(ball, delta);
+}
