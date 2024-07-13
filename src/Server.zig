@@ -266,7 +266,7 @@ const Connection = struct {
 
                 try self.server.server_sim.appendChamber(id, chamber.data);
 
-                try self.server.db.acceptChamber(id);
+                try self.server.db.setChamberState(id, Db.ChamberState.accepted);
                 const response_header = http.Header{
                     .status = .ok,
                     .content_type = .@"application/json",
@@ -277,7 +277,7 @@ const Connection = struct {
             .reject_chamber => |id_raw| {
                 const id = Db.ChamberId{ .value = id_raw };
 
-                try self.server.db.deleteChamber(id);
+                try self.server.db.setChamberState(id, Db.ChamberState.rejected);
 
                 const response_header = http.Header{
                     .status = .ok,
@@ -393,7 +393,9 @@ const Connection = struct {
                     return error.NoChamber;
                 };
 
-                _ = try self.server.db.addChamber(user.id, chamber_name, chamber);
+                const chamber_id = try self.server.db.addChamber(user.id, chamber_name, chamber);
+                // Temporary hack
+                try self.server.db.setChamberState(chamber_id, .validated);
 
                 const response_header = http.Header{
                     .status = .see_other,
@@ -409,7 +411,7 @@ const Connection = struct {
                 return try http.Writer.init(self.server.alloc, response_header, "", false);
             },
             .unaccepted_chambers => {
-                var unaccepted_chambers = try self.server.db.getUnacceptedChambers(self.server.alloc);
+                var unaccepted_chambers = try self.server.db.getChambersWithState(self.server.alloc, .validated);
                 defer unaccepted_chambers.deinit(self.server.alloc);
 
                 const UnacceptedChamberJsonSerializer = struct {

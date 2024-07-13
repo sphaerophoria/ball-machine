@@ -45,6 +45,6 @@ pub fn main() !void {
         defer alloc.free(wasm_data);
 
         const chamber_id = try db.addChamber(user_id, chamber, wasm_data);
-        try db.acceptChamber(chamber_id);
+        try db.setChamberState(chamber_id, Db.ChamberState.accepted);
     }
 }

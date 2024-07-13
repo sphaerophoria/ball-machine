@@ -282,7 +282,7 @@ pub fn main() !void {
     var db = try Db.init(args.db);
     defer db.deinit();
 
-    var db_chambers = try db.getAcceptedChambers(alloc);
+    var db_chambers = try db.getChambersWithState(alloc, Db.ChamberState.accepted);
     defer db_chambers.deinit(alloc);
 
     var app = try ServerSimulation.init(alloc, db_chambers.items);
