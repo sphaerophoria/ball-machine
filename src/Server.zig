@@ -424,7 +424,7 @@ const Connection = struct {
                     .extra = &.{
                         .{
                             .key = "Location",
-                            .value = "/index.html",
+                            .value = "/user.html",
                         },
                     },
                 };
@@ -434,41 +434,35 @@ const Connection = struct {
                 var chambers = try self.server.db.getChambersWithState(self.server.alloc, state);
                 defer chambers.deinit(self.server.alloc);
 
-                const ChamberJsonSerializer = struct {
-                    chamber_list: *const Db.ChamberList,
-                    db: *Db,
-                    alloc: Allocator,
+                var out_buf = try std.ArrayList(u8).initCapacity(self.server.alloc, 4096);
+                errdefer out_buf.deinit();
 
-                    pub fn jsonStringify(ser: *const @This(), writer: anytype) @TypeOf(writer.*).Error!void {
-                        try writer.beginArray();
-                        for (ser.chamber_list.items) |chamber| {
-                            // FIXME: who is it by
-                            const Elem = struct {
-                                chamber_name: []const u8,
-                                chamber_id: i64,
-                                user: []const u8,
-                            };
-                            var info = ser.db.userFromId(ser.alloc, chamber.user_id) catch null;
-                            defer {
-                                if (info) |*v| {
-                                    v.deinit(ser.alloc);
-                                }
-                            }
-                            var name: []const u8 = "";
-                            if (info) |v| {
-                                name = v.username;
-                            }
-                            const elem = Elem{
-                                .chamber_id = chamber.id.value,
-                                .chamber_name = chamber.name,
-                                .user = name,
-                            };
-
-                            try writer.write(elem);
-                        }
-                        try writer.endArray();
-                    }
+                const serializer = ChamberJsonSerializer{
+                    .chamber_list = &chambers,
+                    .db = self.server.db,
+                    .alloc = self.server.alloc,
                 };
+
+                try std.json.stringify(serializer, .{}, out_buf.writer());
+
+                const response_body = try out_buf.toOwnedSlice();
+                errdefer self.server.alloc.free(response_body);
+
+                const response_header = http.Header{
+                    .status = .ok,
+                    .content_type = .@"application/json",
+                    .content_length = response_body.len,
+                };
+                return try http.Writer.init(self.server.alloc, response_header, response_body, true);
+            },
+            .my_chambers => {
+                var user = try self.server.auth.userForRequest(self.server.alloc, reader.header_buf) orelse {
+                    return error.NoUser;
+                };
+                defer user.deinit(self.server.alloc);
+
+                var chambers = try self.server.db.getChambersForUserNoData(self.server.alloc, user.id);
+                defer chambers.deinit(self.server.alloc);
 
                 var out_buf = try std.ArrayList(u8).initCapacity(self.server.alloc, 4096);
                 errdefer out_buf.deinit();
@@ -589,6 +583,46 @@ const Connection = struct {
                 .deinit => return .deinit,
             }
         }
+    }
+};
+
+const ChamberJsonSerializer = struct {
+    chamber_list: *const Db.ChamberList,
+    db: *Db,
+    alloc: Allocator,
+
+    pub fn jsonStringify(ser: *const @This(), writer: anytype) @TypeOf(writer.*).Error!void {
+        try writer.beginArray();
+        for (ser.chamber_list.items) |chamber| {
+            // FIXME: who is it by
+            const Elem = struct {
+                chamber_name: []const u8,
+                chamber_id: i64,
+                user: []const u8,
+                message: []const u8,
+                state: []const u8,
+            };
+            var info = ser.db.userFromId(ser.alloc, chamber.user_id) catch null;
+            defer {
+                if (info) |*v| {
+                    v.deinit(ser.alloc);
+                }
+            }
+            var name: []const u8 = "";
+            if (info) |v| {
+                name = v.username;
+            }
+            const elem = Elem{
+                .chamber_id = chamber.id.value,
+                .chamber_name = chamber.name,
+                .user = name,
+                .message = chamber.message,
+                .state = @tagName(chamber.state),
+            };
+
+            try writer.write(elem);
+        }
+        try writer.endArray();
     }
 };
 
@@ -771,6 +805,7 @@ const UrlPurpose = union(enum) {
     get_resource: void,
     redirect: []const u8,
     chambers: Db.ChamberState,
+    my_chambers: void,
 
     fn parseGetChamber(target: []const u8) ?UrlPurpose {
         if (target.len < 1 or target[0] != '/') {
@@ -823,6 +858,7 @@ const UrlPurpose = union(enum) {
         @"/",
         @"/reset",
         @"/simulation_state",
+        @"/my_chambers",
     };
 
     const QueryParamOptions = enum {
@@ -885,6 +921,9 @@ const UrlPurpose = union(enum) {
                 },
                 .@"/simulation_state" => {
                     return UrlPurpose{ .simulation_state = 0 };
+                },
+                .@"/my_chambers" => {
+                    return UrlPurpose{ .my_chambers = {} };
                 },
             }
         }

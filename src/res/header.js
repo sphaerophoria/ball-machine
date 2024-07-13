@@ -2,6 +2,7 @@ const header_html = `
 <a href="/index.html">Simulation</a>
 <a href="/upload.html">Upload</a>
 <a href="/chamber_test.html">Chamber testing</a>
+<a href="/user.html">User</a>
 `;
 
 var header = null;

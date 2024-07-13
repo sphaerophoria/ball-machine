@@ -233,6 +233,7 @@ def main():
 
     get("/userinfo")
     get("/")
+    get("/my_chambers")
 
 
 if __name__ == "__main__":
