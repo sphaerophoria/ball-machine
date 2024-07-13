@@ -9,6 +9,10 @@ const ServerSimulation = @import("ServerSimulation.zig");
 const Db = @import("Db.zig");
 const TimerEvent = @import("TimerEvent.zig");
 
+pub const std_options = std.Options{
+    .log_level = .info,
+};
+
 const Args = struct {
     alloc: Allocator,
     www_root: ?[]const u8,
