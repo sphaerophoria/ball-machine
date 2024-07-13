@@ -17,6 +17,7 @@ pub fn main() !void {
     defer alloc.free(chamber_data);
 
     var tester = try ChamberTester.init();
+    defer tester.deinit();
 
     try tester.ensureValidChamber(alloc, chamber_data);
 }

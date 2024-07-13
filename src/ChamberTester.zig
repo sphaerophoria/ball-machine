@@ -36,6 +36,10 @@ pub fn init() !ChamberTester {
     };
 }
 
+pub fn deinit(self: *ChamberTester) void {
+    self.loader.deinit();
+}
+
 pub fn ensureValidChamber(self: *ChamberTester, alloc: Allocator, data: []const u8) !void {
     var chamber = try self.loader.load(alloc, data);
     defer chamber.deinit();
