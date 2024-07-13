@@ -5,4 +5,5 @@ pub usingnamespace @cImport({
     @cInclude("openssl/param_build.h");
     @cInclude("curl/curl.h");
     @cInclude("sqlite3.h");
+    @cInclude("sys/resource.h");
 });

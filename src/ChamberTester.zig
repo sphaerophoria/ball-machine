@@ -58,7 +58,7 @@ pub fn ensureValidChamber(self: *ChamberTester, alloc: Allocator, data: []const 
     try simulation.setNumBalls(100);
     simulation.setChambersPerRow(1);
 
-    for (0..10000) |_| {
+    for (0..1000) |_| {
         try simulation.step();
 
         const save = try chamber_if.save(alloc);

@@ -56,7 +56,7 @@ async function makeChamberWidget(chamber) {
 }
 
 async function init() {
-  const chambers_resopnse = await fetch("/unaccepted_chambers");
+  const chambers_resopnse = await fetch("/chambers?state=validated");
   const chambers = await chambers_resopnse.json();
 
   for (const chamber of chambers) {

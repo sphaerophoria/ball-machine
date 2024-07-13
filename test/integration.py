@@ -168,8 +168,13 @@ def ensure_num_chambers(num_chambers, purpose):
         raise RuntimeError(purpose)
 
 
+def chambers_pending_validation():
+    chambers = json.loads(get("/chambers?state=pending_validation"))
+    return len(chambers) != 0
+
+
 def get_unaccepted_chamber_ids():
-    unaccepted_chambers = json.loads(get("/unaccepted_chambers"))
+    unaccepted_chambers = json.loads(get("/chambers?state=validated"))
     return map(lambda x: x["chamber_id"], iter(unaccepted_chambers))
 
 
@@ -204,6 +209,9 @@ def main():
 
     upload_module("spinny_bar.wasm")
     upload_module("counter.wasm")
+
+    while chambers_pending_validation():
+        time.sleep(1)
 
     ensure_num_chambers(num_chambers, "Chambers should not be accepted")
 

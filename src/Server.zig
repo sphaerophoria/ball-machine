@@ -1,4 +1,5 @@
 const std = @import("std");
+const c = @import("c.zig");
 const http = @import("http.zig");
 const resources = @import("resources");
 const userinfo = @import("userinfo.zig");
@@ -12,7 +13,9 @@ const future = @import("future.zig");
 const Ball = physics.Ball;
 const ConnectionSpawner = @import("TcpServer.zig").ConnectionSpawner;
 const ServerSimulation = @import("ServerSimulation.zig");
+const ChamberTester = @import("ChamberTester.zig");
 const Db = @import("Db.zig");
+const wasm_chamber = @import("wasm_chamber.zig");
 
 const Server = @This();
 
@@ -21,6 +24,8 @@ www_root: ?[]const u8,
 server_sim: *ServerSimulation,
 admin_id: []const u8,
 client_id: []const u8,
+chamber_validation_thread: *ChamberValidationThread,
+chamber_validation_handle: std.Thread,
 auth_request_thread: *AuthRequestThread,
 auth_request_handle: std.Thread,
 event_loop: *EventLoop,
@@ -51,6 +56,15 @@ pub fn init(
         .{auth_request_thread},
     );
 
+    var chamber_validation_thread = try ChamberValidationThread.init(alloc, db);
+    errdefer chamber_validation_thread.deinit();
+
+    const chamber_validation_handle = try std.Thread.spawn(
+        .{},
+        ChamberValidationThread.run,
+        .{chamber_validation_thread},
+    );
+
     const auth = try Authentication.init(alloc, server_url, jwt_keys, db);
 
     return Server{
@@ -62,6 +76,8 @@ pub fn init(
         .auth = auth,
         .auth_request_thread = auth_request_thread,
         .auth_request_handle = auth_request_handle,
+        .chamber_validation_thread = chamber_validation_thread,
+        .chamber_validation_handle = chamber_validation_handle,
         .event_loop = event_loop,
         .db = db,
     };
@@ -69,8 +85,13 @@ pub fn init(
 
 pub fn deinit(self: *Server) void {
     self.auth_request_thread.shutdown.store(true, .monotonic);
+    self.chamber_validation_thread.shutdown.store(true, .monotonic);
+
     self.auth_request_handle.join();
+    self.chamber_validation_handle.join();
+
     self.auth_request_thread.deinit();
+    self.chamber_validation_thread.deinit();
 }
 
 pub fn spawner(self: *Server) ConnectionSpawner {
@@ -139,7 +160,7 @@ const Connection = struct {
     fn queueAuthRequest(self: *Connection, code: []const u8) !void {
         // promise cleanup handled through req.deinit() below
         const promise = try future.Promise([]const u8).init(self.server.alloc);
-        var req = AuthRequestQueue.Request{
+        var req = AuthRequest{
             .code = code,
             .promise = promise,
         };
@@ -394,8 +415,7 @@ const Connection = struct {
                 };
 
                 const chamber_id = try self.server.db.addChamber(user.id, chamber_name, chamber);
-                // Temporary hack
-                try self.server.db.setChamberState(chamber_id, .validated);
+                try self.server.chamber_validation_thread.request_queue.push(chamber_id);
 
                 const response_header = http.Header{
                     .status = .see_other,
@@ -410,11 +430,11 @@ const Connection = struct {
                 };
                 return try http.Writer.init(self.server.alloc, response_header, "", false);
             },
-            .unaccepted_chambers => {
-                var unaccepted_chambers = try self.server.db.getChambersWithState(self.server.alloc, .validated);
-                defer unaccepted_chambers.deinit(self.server.alloc);
+            .chambers => |state| {
+                var chambers = try self.server.db.getChambersWithState(self.server.alloc, state);
+                defer chambers.deinit(self.server.alloc);
 
-                const UnacceptedChamberJsonSerializer = struct {
+                const ChamberJsonSerializer = struct {
                     chamber_list: *const Db.ChamberList,
                     db: *Db,
                     alloc: Allocator,
@@ -453,8 +473,8 @@ const Connection = struct {
                 var out_buf = try std.ArrayList(u8).initCapacity(self.server.alloc, 4096);
                 errdefer out_buf.deinit();
 
-                const serializer = UnacceptedChamberJsonSerializer{
-                    .chamber_list = &unaccepted_chambers,
+                const serializer = ChamberJsonSerializer{
+                    .chamber_list = &chambers,
                     .db = self.server.db,
                     .alloc = self.server.alloc,
                 };
@@ -750,7 +770,7 @@ const UrlPurpose = union(enum) {
     userinfo: void,
     get_resource: void,
     redirect: []const u8,
-    unaccepted_chambers: void,
+    chambers: Db.ChamberState,
 
     fn parseGetChamber(target: []const u8) ?UrlPurpose {
         if (target.len < 1 or target[0] != '/') {
@@ -803,13 +823,13 @@ const UrlPurpose = union(enum) {
         @"/",
         @"/reset",
         @"/simulation_state",
-        @"/unaccepted_chambers",
     };
 
     const QueryParamOptions = enum {
         @"/login_code",
         @"/accept_chamber",
         @"/reject_chamber",
+        @"/chambers",
         @"/simulation_state",
 
         fn parse(target: []const u8) ?QueryParamOptions {
@@ -866,9 +886,6 @@ const UrlPurpose = union(enum) {
                 .@"/simulation_state" => {
                     return UrlPurpose{ .simulation_state = 0 };
                 },
-                .@"/unaccepted_chambers" => {
-                    return UrlPurpose{ .unaccepted_chambers = {} };
-                },
             }
         }
 
@@ -897,6 +914,19 @@ const UrlPurpose = union(enum) {
 
                     return UrlPurpose{ .admin = .{ .reject_chamber = id } };
                 },
+                .@"/chambers" => {
+                    const state_s = extractStringFromQueryParams(target, "state") orelse {
+                        std.log.err("State param not provided in /chambers", .{});
+                        return error.NoState;
+                    };
+
+                    const state = std.meta.stringToEnum(Db.ChamberState, state_s) orelse {
+                        std.log.err("State string {s} is not a valid state", .{state_s});
+                        return error.InvalidState;
+                    };
+
+                    return UrlPurpose{ .chambers = state };
+                },
                 .@"/simulation_state" => {
                     const since_s = extractStringFromQueryParams(target, "since") orelse "0";
                     const since = try std.fmt.parseInt(u64, since_s, 10);
@@ -910,39 +940,46 @@ const UrlPurpose = union(enum) {
     }
 };
 
-const AuthRequestQueue = struct {
-    const Request = struct {
-        code: []const u8,
-        promise: *future.Promise([]const u8),
+fn ThreadSafeFifo(comptime T: type) type {
+    return struct {
+        const Fifo = std.fifo.LinearFifo(T, .{ .Static = 100 });
 
-        fn deinit(self: *@This()) void {
-            self.promise.unref();
+        mutex: std.Thread.Mutex = .{},
+        cv: std.Thread.Condition = .{},
+        fifo: Fifo = Fifo.init(),
+        const Self = @This();
+
+        fn pop(self: *Self, timeout_ns: u64) ?T {
+            self.mutex.lock();
+            defer self.mutex.unlock();
+
+            while (true) {
+                if (self.fifo.readItem()) |item| {
+                    return item;
+                }
+
+                self.cv.timedWait(&self.mutex, timeout_ns) catch {
+                    return null;
+                };
+            }
+        }
+
+        fn push(self: *Self, req: T) !void {
+            self.mutex.lock();
+            defer self.mutex.unlock();
+
+            try self.fifo.writeItem(req);
+            self.cv.signal();
         }
     };
-    const Fifo = std.fifo.LinearFifo(Request, .{ .Static = 100 });
+}
 
-    mutex: std.Thread.Mutex = .{},
-    cv: std.Thread.Condition = .{},
-    fifo: Fifo = Fifo.init(),
+const AuthRequest = struct {
+    code: []const u8,
+    promise: *future.Promise([]const u8),
 
-    fn pop(self: *AuthRequestQueue, timeout_ns: u64) ?Request {
-        self.mutex.lock();
-        defer self.mutex.unlock();
-
-        while (true) {
-            self.cv.timedWait(&self.mutex, timeout_ns) catch {
-                return null;
-            };
-            return self.fifo.readItem();
-        }
-    }
-
-    fn push(self: *AuthRequestQueue, req: Request) !void {
-        self.mutex.lock();
-        defer self.mutex.unlock();
-
-        try self.fifo.writeItem(req);
-        self.cv.signal();
+    fn deinit(self: *@This()) void {
+        self.promise.unref();
     }
 };
 
@@ -953,7 +990,7 @@ const AuthRequestThread = struct {
     shutdown: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
     client_id: []const u8,
     client_secret: []const u8,
-    request_queue: AuthRequestQueue = .{},
+    request_queue: ThreadSafeFifo(AuthRequest) = .{},
 
     fn init(
         alloc: Allocator,
@@ -1000,6 +1037,80 @@ const AuthRequestThread = struct {
             const url = "https://id.twitch.tv/oauth2/token";
             const response = try self.client.post(self.alloc, url, req_data);
             req.promise.set(response);
+        }
+    }
+};
+
+const ChamberValidationThread = struct {
+    alloc: Allocator,
+    shutdown: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
+    request_queue: ThreadSafeFifo(Db.ChamberId) = .{},
+    tester: ChamberTester,
+    db: *Db,
+
+    fn init(alloc: Allocator, db: *Db) !*ChamberValidationThread {
+        const ret = try alloc.create(ChamberValidationThread);
+        errdefer alloc.destroy(ret);
+
+        ret.* = .{
+            .alloc = alloc,
+            .db = db,
+            .tester = try ChamberTester.init(),
+        };
+
+        var pending_chambers = try db.getChambersWithState(alloc, .pending_validation);
+        defer pending_chambers.deinit(alloc);
+
+        for (pending_chambers.items) |item| {
+            try ret.request_queue.push(item.id);
+        }
+
+        return ret;
+    }
+
+    fn deinit(self: *ChamberValidationThread) void {
+        self.tester.deinit();
+        self.alloc.destroy(self);
+    }
+
+    fn run(self: *ChamberValidationThread) void {
+        const pid = std.Thread.getCurrentId();
+        _ = c.setpriority(c.PRIO_PROCESS, pid, 10);
+
+        while (!self.shutdown.load(.monotonic)) {
+            const req = self.request_queue.pop(50_000_000) orelse {
+                continue;
+            };
+
+            std.log.info("Validating chamber {d}", .{req.value});
+
+            var chamber = self.db.getChamber(self.alloc, req) catch {
+                std.log.err("Chamber ID {d} is not valid", .{req.value});
+                continue;
+            };
+            defer chamber.deinit(self.alloc);
+
+            var diagnostics = wasm_chamber.Diagnostics{
+                .alloc = self.alloc,
+            };
+            defer diagnostics.deinit();
+
+            self.tester.ensureValidChamber(self.alloc, chamber.data, &diagnostics) catch |e| {
+                std.log.info("Chamber {d} did not pass validation: {any} {s}", .{ req.value, e, diagnostics.msg });
+                self.db.setChamberState(req, Db.ChamberState.validation_failed) catch {
+                    std.log.err("Failed to mark chamber as invalid", .{});
+                };
+                self.db.setChamberMessage(req, diagnostics.msg) catch {
+                    std.log.err("Failed to set chamber message", .{});
+                };
+                continue;
+            };
+
+            std.log.info("Chamber {d} passed validation", .{req.value});
+
+            self.db.setChamberState(req, Db.ChamberState.validated) catch {
+                std.log.err("Failed to mark chamber as validated", .{});
+            };
         }
     }
 };
