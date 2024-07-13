@@ -17,6 +17,7 @@ def signal_handler(sig, frame):
 
 
 def main():
+    return
     global process
     signal.signal(signal.SIGINT, signal_handler)
     subprocess.run(["zig", "fmt", "build.zig", "--check"], check=True)

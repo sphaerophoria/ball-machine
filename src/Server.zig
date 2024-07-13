@@ -740,6 +740,7 @@ fn pathToContentType(path: []const u8) !http.ContentType {
         @".html",
         @".wasm",
         @".css",
+        @".h",
     };
 
     inline for (std.meta.fields(Extension)) |field| {
@@ -750,11 +751,13 @@ fn pathToContentType(path: []const u8) !http.ContentType {
                 .@".html" => return .@"text/html",
                 .@".wasm" => return .@"application/wasm",
                 .@".css" => return .@"text/css",
+                .@".h" => return .@"text/plain",
             }
         }
     }
 
-    return error.Unimplemented;
+    std.log.warn("Unknown extension for path {s}", .{path});
+    return .@"text/plain";
 }
 
 fn embeddedLookup(path: []const u8) ![]const u8 {

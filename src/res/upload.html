@@ -1,6 +1,7 @@
 <!doctype html>
 <head>
   <script src="/header.js" defer="true"></script>
+  <script src="/upload.js"></script>
   <link rel="stylesheet" href="/water.css" />
 </head>
 <body>
@@ -14,4 +15,121 @@
     <br />
     <input type="submit" />
   </form>
+  <h2>How?</h2>
+  <p>
+    Each chamber is defined as a WASM module. These WASM modules expose an API
+    that allows them to perform physics on a set of balls given to them, and
+    render whatever they want to an HTML canvas<br />
+  </p>
+  <p>Chambers are expected to expose the following API</p>
+  <iframe src="/wasm_interface.h" width="100%" height="200px"></iframe>
+
+  <h3>Memory model</h3>
+  <p>
+    WASM modules can have either imported or exported memory. We expect chambers
+    to manage their own memory. Chambers should export a memory segment called
+    "memory" that we use for chamber IO. Note that the maximum amount of memory
+    that a chamber is allowed to use is limited. See
+    <a href="#resource_constraints">Resource constraints</a> for more detail.
+    Some useful references...
+    <br />
+    <a
+      href="https://developer.mozilla.org/en-US/docs/WebAssembly/JavaScript_interface/Memory"
+    >
+      https://developer.mozilla.org/en-US/docs/WebAssembly/JavaScript_interface/Memory
+    </a>
+    <br />
+    <a href="https://surma.dev/things/c-to-webassembly/">
+      https://surma.dev/things/c-to-webassembly/
+    </a>
+    <br />
+  </p>
+
+  <h3>Physics</h3>
+  <p>
+    Feel free to do whatever you want... however, you are going to struggle if
+    you do not at least have the ball structure definition. We expose a physics
+    library called "libphyisics". This provides some useful definitions like
+    vec2, pos2, ball, and surface. We also provide some basic collision
+    checking. If you need to bounce a ball off a flat surface, we have covered.
+    Other things may require a little bit of linear algebra on your end.
+  </p>
+  <p>See <a href="#examples">examples</a> for example usage</p>
+  <p><b>TODO</b>: Embed libphysics, physics.h, and physics.zig</p>
+
+  <h3 id="resource_constraints">Chamber development workflow</h3>
+  <p>
+    If you go to the <a href="/chamber_test.html">chamber testing</a> page, you
+    can upload a wasm module and test it completely client side. My suggested
+    workflow is to start without worrying about save/load management, make your
+    chamber work, then check the save/load checkbox and continue on
+  </p>
+  <p>
+    Once you're happy with the chamber, you can upload it via the
+    <a href="/upload.html">upload page</a>. At this point it will be sent to the
+    server and queued for validation. The server will automatically ensure that
+    the correct APIs are exposed with the correct arguments. It will also check
+    if your module uses too much CPU/Memory, so be careful.
+  </p>
+  <p>
+    In the case where server validation fails, your chamber should be displayed
+    in the <a href="/user.html">user info</a> page with an error message
+    propogated from the server. Make adjustments, and try again, or clone
+    <a href="https://github.com/sphaerophoria/ball-machine">ball-machine</a> and
+    run
+    <code
+      >zig build -Doptimize=ReleaseSafe && ./zig-out/bin/test_chamber {your
+      chamber}</code
+    >
+  </p>
+  <h3 id="resource_constraints">Resource constraints</h3>
+  <p>
+    We limit all of CPU/Memory/Size of chambers. At the moment size is
+    implicitly limited by the nginx config, but we may put more aggressive
+    intentional limits later if we end up using too much space.
+  </p>
+  <p>
+    CPU/Memory are limited by our
+    <a
+      href="https://github.com/sphaerophoria/ball-machine/blob/master/src/ChamberTester.zig"
+      >chamber tester</a
+    >. Fuel is a pretty unitless measure, that I hope is consistent between
+    machines. This comes from <a href="https://wasmtime.dev/">wasmtime</a> with
+    little thought put in.
+  </p>
+  <p>
+    Memory is limited pretty aggressively to the point where using default wasm
+    compilation flags are likely to be insufficient. Specifically I have seen a
+    default stack size of 1M set for modules, this needs to be brought down to
+    fit in the 10 page limit currently set. See
+    <a href="#examples">examples</a> for how to limit your memory usage
+  </p>
+  <p>
+    Limit testing can be done either by upload modules to our server for us to
+    validate, or you can clone
+    <a href="https://github.com/sphaerophoria/ball-machine/">ball-machine</a> to
+    use its chamber tester binary
+  </p>
+  <h3 id="examples">Examples</h3>
+  We have examples of Zig, C and Rust chambers available
+  <a
+    href="https://github.com/sphaerophoria/ball-machine/tree/master/src/chambers"
+    >here</a
+  >
+
+  There are some interesting build options set, so check out
+  <a href="https://github.com/sphaerophoria/ball-machine/blob/master/build.zig"
+    >build.zig</a
+  >
+  for C/Zig config options, and
+  <a
+    href="https://github.com/sphaerophoria/ball-machine/blob/master/src/chambers/counter/Cargo.toml"
+    >Cargo.toml</a
+  >
+  and
+  <a
+    href="https://github.com/sphaerophoria/ball-machine/blob/master/src/chambers/counter/.cargo/config.toml"
+    >.cargo/config.toml</a
+  >
+  for Rust chambers
 </body>
