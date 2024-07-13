@@ -115,7 +115,7 @@ pub fn step(self: *ServerSimulation) !void {
 pub fn appendChamber(self: *ServerSimulation, chamber_id: Db.ChamberId, data: []const u8) !void {
     const chamber = try self.alloc.create(wasm_chamber.WasmChamber);
     errdefer self.alloc.destroy(chamber);
-    chamber.* = try self.wasm_loader.load(self.alloc, data);
+    chamber.* = try self.wasm_loader.load(self.alloc, data, null);
     errdefer chamber.deinit();
 
     try self.chamber_mods.append(self.alloc, chamber);

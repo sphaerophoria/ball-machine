@@ -1,5 +1,6 @@
 const std = @import("std");
 const ChamberTester = @import("ChamberTester.zig");
+const wasm_chamber = @import("wasm_chamber.zig");
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -19,5 +20,13 @@ pub fn main() !void {
     var tester = try ChamberTester.init();
     defer tester.deinit();
 
-    try tester.ensureValidChamber(alloc, chamber_data);
+    var diagnostics = wasm_chamber.Diagnostics{
+        .alloc = alloc,
+    };
+    defer diagnostics.deinit();
+
+    tester.ensureValidChamber(alloc, chamber_data, &diagnostics) catch |e| {
+        std.log.err("{any}: {s}", .{ e, diagnostics.msg });
+        return e;
+    };
 }

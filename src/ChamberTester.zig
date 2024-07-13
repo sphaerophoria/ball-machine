@@ -40,8 +40,8 @@ pub fn deinit(self: *ChamberTester) void {
     self.loader.deinit();
 }
 
-pub fn ensureValidChamber(self: *ChamberTester, alloc: Allocator, data: []const u8) !void {
-    var chamber = try self.loader.load(alloc, data);
+pub fn ensureValidChamber(self: *ChamberTester, alloc: Allocator, data: []const u8, diagnostics: *wasm_chamber.Diagnostics) !void {
+    var chamber = try self.loader.load(alloc, data, diagnostics);
     defer chamber.deinit();
 
     var simulation = try Simulation.init(alloc, 0, canvas_max_pixels);
