@@ -142,7 +142,7 @@ fn deinitPartiallyAllocatedDoubleSlice(alloc: Allocator, double_slice: anytype, 
 }
 
 fn takeSnapshot(alloc: Allocator, simulation: *Simulation) !Snapshot {
-    const num_chambers = simulation.chambers.items.len;
+    const num_chambers = simulation.numChambers();
 
     var num_written_chambers: usize = 0;
 
@@ -161,7 +161,11 @@ fn takeSnapshot(alloc: Allocator, simulation: *Simulation) !Snapshot {
         balls[i] = try alloc.dupe(Ball, balls_only);
         errdefer alloc.free(balls[i]);
 
-        saves[i] = try simulation.chambers.items[i].save(alloc);
+        if (i < simulation.chambers.items.len) {
+            saves[i] = try simulation.chambers.items[i].save(alloc);
+        } else {
+            saves[i] = &.{};
+        }
         errdefer alloc.free(saves[i]);
 
         num_written_chambers = i;
