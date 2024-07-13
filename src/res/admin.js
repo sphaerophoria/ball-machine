@@ -1,3 +1,4 @@
+import { canvas_width } from "./chamber_renderer.js";
 import { LocalSimulation } from "./local_simulation.js";
 import { makeChamber, makeSimulation } from "./wasm.js";
 import { sanitize } from "./sanitize.js";
@@ -5,7 +6,10 @@ import { sanitize } from "./sanitize.js";
 async function instantiateChamber(parent, id) {
   const chamber = await makeChamber("/" + id + "/chamber.wasm");
   const simulation = await makeSimulation(chamber);
-  simulation.instance.exports.init();
+  simulation.instance.exports.init(
+    0,
+    canvas_width * canvas_width * simulation.instance.exports.chamberHeight(),
+  );
   return new LocalSimulation(parent, chamber, simulation);
 }
 
