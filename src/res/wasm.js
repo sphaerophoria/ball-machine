@@ -54,6 +54,13 @@ class SimulationCallbacks {
 
     this.chamber.instance.exports.step(num_balls, delta);
 
+    // If realloc causes wasm memory to grow, the buffer is in a new location and we need to look again
+    chamber_balls = new Uint8Array(
+      this.chamber.instance.exports.memory.buffer,
+      chamber_dest,
+      byte_len,
+    );
+
     sim_balls.set(chamber_balls);
   }
 }
