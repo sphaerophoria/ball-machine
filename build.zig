@@ -25,6 +25,7 @@ const BuildSteps = struct {
     chambers: *Step,
     check: *Step,
     install: *Step,
+    libphysics: *Step,
 
     fn init(b: *Build) BuildSteps {
         return .{
@@ -32,6 +33,7 @@ const BuildSteps = struct {
             .chambers = b.step("chambers", "Chambers only"),
             .check = b.step("check", "Quick check"),
             .install = b.getInstallStep(),
+            .libphysics = b.step("libphysics", "Build physics lib"),
         };
     }
 };
@@ -345,6 +347,9 @@ pub fn build(b: *std.Build) !void {
     if (builder.options.embed_www) {
         builder.tools.embedDir(b.path("src/res"));
     }
+    builder.tools.embedFile(builder.wasm_libs.physics.getEmittedBin());
+    builder.tools.embedFile(b.path("src/libphysics/physics.h"));
+    builder.tools.embedFile(b.path("src/physics.zig"));
 
     const exe = builder.addExe("ball-machine", "src/main.zig");
     exe.root_module.addImport("resources", builder.modules.resources);
@@ -354,6 +359,8 @@ pub fn build(b: *std.Build) !void {
     const tester = builder.addExe("test_chamber", "src/test_chamber.zig");
     builder.libs.linkAll(tester);
     builder.b.installArtifact(tester);
+
+    builder.steps.libphysics.dependOn(&builder.wasm_libs.physics_install.step);
 
     // NOTE: We have to make the executable again for the check step. If the
     // exe is depended on by an install step, even if not executed, this will
