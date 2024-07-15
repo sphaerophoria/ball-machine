@@ -252,8 +252,8 @@ const ServerSimulationRunner = struct {
             return .none;
         }
 
-        self.app.step() catch {
-            std.log.err("App failed", .{});
+        self.app.step() catch |e| {
+            std.log.err("App failed: {any} {s}", .{ e, self.app.diagnostics.msg });
             return .server_shutdown;
         };
 

@@ -44,6 +44,7 @@ simulation: Simulation,
 new_chamber_idx: usize = 0,
 history: SnapshotHistory,
 start: std.time.Instant,
+diagnostics: *wasm_chamber.Diagnostics,
 
 pub fn init(alloc: Allocator, chambers: []const Db.Chamber) !ServerSimulation {
     var ret = try initEmpty(alloc, chambers.len);
@@ -75,6 +76,12 @@ fn initEmpty(alloc: Allocator, capacity: usize) !ServerSimulation {
     var history = try SnapshotHistory.init(alloc, 15, alloc);
     errdefer history.deinit(alloc);
 
+    const diagnostics = try alloc.create(wasm_chamber.Diagnostics);
+    errdefer alloc.destroy(diagnostics);
+    diagnostics.* = .{
+        .alloc = alloc,
+    };
+
     return ServerSimulation{
         .alloc = alloc,
         .wasm_loader = wasm_loader,
@@ -82,6 +89,7 @@ fn initEmpty(alloc: Allocator, capacity: usize) !ServerSimulation {
         .chamber_mods = chamber_mods,
         .simulation = simulation,
         .history = history,
+        .diagnostics = diagnostics,
         .start = try std.time.Instant.now(),
     };
 }
@@ -92,6 +100,7 @@ pub fn deinit(self: *ServerSimulation) void {
     self.simulation.deinit();
     self.history.deinit(self.alloc);
     self.wasm_loader.deinit();
+    self.alloc.destroy(self.diagnostics);
 }
 
 pub fn step(self: *ServerSimulation) !void {
@@ -115,7 +124,7 @@ pub fn step(self: *ServerSimulation) !void {
 pub fn appendChamber(self: *ServerSimulation, chamber_id: Db.ChamberId, data: []const u8) !void {
     const chamber = try self.alloc.create(wasm_chamber.WasmChamber);
     errdefer self.alloc.destroy(chamber);
-    chamber.* = try self.wasm_loader.load(self.alloc, data, null);
+    chamber.* = try self.wasm_loader.load(self.alloc, data, self.diagnostics);
     errdefer chamber.deinit();
 
     try self.chamber_mods.append(self.alloc, chamber);

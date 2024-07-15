@@ -330,12 +330,29 @@ fn generateDudeAnimation(b: *Build) std.Build.LazyPath {
     return tool_run.addOutputFileArg("animation.zig");
 }
 
+fn buildVacuumChamber(builder: *Builder) void {
+    const vacuum = builder.addZigChamber("vacuum", "src/chambers/vacuum.zig");
+    vacuum.addIncludePath(builder.b.path("src/chambers/vacuum"));
+    vacuum.addCSourceFile(.{
+        .file = builder.b.path("src/chambers/vacuum/stb_image.c"),
+    });
+    // It seems that stbi_load_from_memory needs a little more stack
+    vacuum.stack_size = 16384 * 3;
+    vacuum.root_module.strip = false;
+    // stb_image uses some libc headers, however does not need libc itself
+    vacuum.linkLibC();
+}
+
 pub fn build(b: *std.Build) !void {
     var builder = Builder.init(b);
 
     _ = builder.addZigChamber("simple", "src/chambers/simple.zig");
     _ = builder.addZigChamber("platforms", "src/chambers/platforms.zig");
     _ = builder.addZigChamber("spinny_bar", "src/chambers/spinny_bar.zig");
+    _ = builder.addZigChamber("pong", "src/chambers/pong.zig");
+    _ = builder.addZigChamber("shadow", "src/chambers/shadow.zig");
+    buildVacuumChamber(&builder);
+    _ = builder.addZigChamber("angled_platforms", "src/chambers/angled_platforms.zig");
     builder.addCChamber("plinko", "src/chambers/plinko.c");
     builder.addRustChamber("counter", "src/chambers/counter");
 
