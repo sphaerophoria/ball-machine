@@ -31,6 +31,7 @@ pkgs.mkShell {
     black
     rustPlatform.bindgenHook
     blender
+    imagemagick
   ];
 }
 

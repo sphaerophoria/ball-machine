@@ -33,8 +33,12 @@ pub fn main() !void {
         "simple",
         "platforms",
         "spinny_bar",
-        "counter",
+        "vacuum",
         "plinko",
+        "pong",
+        "counter",
+        "angled_platforms",
+        "shadow",
     };
 
     var path_buf: [4096]u8 = undefined;

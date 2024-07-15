@@ -330,12 +330,41 @@ fn generateDudeAnimation(b: *Build) std.Build.LazyPath {
     return tool_run.addOutputFileArg("animation.zig");
 }
 
+fn buildVacuumChamber(builder: *Builder) void {
+    const tool_run = builder.b.addSystemCommand(&.{"convert"});
+    tool_run.addArgs(&.{
+        "-background",
+        "none",
+    });
+    tool_run.addFileArg(builder.b.path("src/chambers/vacuum/vacuum.svg"));
+    tool_run.addArgs(&.{
+        "-set",
+        "colorspace",
+        "Gray",
+        "-resize",
+        "30x-1",
+        "-depth",
+        "8",
+    });
+    const image_data = tool_run.addOutputFileArg("image.rgba");
+
+    const vacuum = builder.addZigChamber("vacuum", "src/chambers/vacuum.zig");
+    vacuum.addIncludePath(builder.b.path("src/chambers/vacuum"));
+    vacuum.root_module.addAnonymousImport("image_data", .{
+        .root_source_file = image_data,
+    });
+}
+
 pub fn build(b: *std.Build) !void {
     var builder = Builder.init(b);
 
     _ = builder.addZigChamber("simple", "src/chambers/simple.zig");
     _ = builder.addZigChamber("platforms", "src/chambers/platforms.zig");
     _ = builder.addZigChamber("spinny_bar", "src/chambers/spinny_bar.zig");
+    _ = builder.addZigChamber("pong", "src/chambers/pong.zig");
+    _ = builder.addZigChamber("shadow", "src/chambers/shadow.zig");
+    buildVacuumChamber(&builder);
+    _ = builder.addZigChamber("angled_platforms", "src/chambers/angled_platforms.zig");
     builder.addCChamber("plinko", "src/chambers/plinko.c");
     builder.addRustChamber("counter", "src/chambers/counter");
 

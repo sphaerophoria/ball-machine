@@ -18,7 +18,7 @@ fn getStepFuelLimit() comptime_int {
 const step_fuel_limit = getStepFuelLimit();
 const init_fuel_limit = step_fuel_limit * 500;
 const render_fuel_limit = step_fuel_limit * 500;
-const max_save_size = 30;
+const max_save_size = 50;
 const canvas_width = 400;
 const canvas_height = canvas_width * Simulation.chamber_height;
 const canvas_max_pixels = canvas_width * canvas_height;

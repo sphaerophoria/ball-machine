@@ -27,17 +27,6 @@ pub const State = struct {
     directions: [num_platforms]Direction = .{ .right, .left, .right, .left },
 };
 
-extern fn logWasm(s: [*]const u8, len: usize) void;
-
-fn print(comptime fmt: []const u8, args: anytype) void {
-    const to_print = std.fmt.allocPrint(std.heap.wasm_allocator, fmt, args) catch {
-        @panic("");
-    };
-    defer std.heap.wasm_allocator.free(to_print);
-
-    logWasm(to_print.ptr, to_print.len);
-}
-
 var balls: []Ball = undefined;
 var chamber_pixels: []u32 = undefined;
 const save_size = 20;

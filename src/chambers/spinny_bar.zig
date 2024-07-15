@@ -5,6 +5,7 @@ const Surface = physics.Surface;
 const Allocator = std.mem.Allocator;
 const Pos2 = physics.Pos2;
 const Vec2 = physics.Vec2;
+const graphics = @import("graphics.zig");
 
 const center = Pos2{
     .x = 0.5,
@@ -116,10 +117,15 @@ pub export fn step(num_balls: usize, delta: f32) void {
 }
 
 pub export fn render(canvas_width: usize, canvas_height: usize) void {
-    @memset(chamber_pixels, 0xffffffff);
+    const this_frame_data = chamber_pixels[0 .. canvas_width * canvas_height];
+    @memset(this_frame_data, 0xffffffff);
 
     const surface = state.surface();
-    renderLine(surface.a, surface.b, canvas_width, canvas_height, chamber_pixels);
+    const graphics_canvas: graphics.Canvas = .{
+        .data = this_frame_data,
+        .width = canvas_width,
+    };
+    graphics.renderLine(surface.a, surface.b, &graphics_canvas, graphics.colorTexturer(0xff000000));
 }
 
 fn to_y_px(norm: f32, chamber_width: usize, chamber_height: usize) i64 {
@@ -131,71 +137,6 @@ fn to_y_px(norm: f32, chamber_width: usize, chamber_height: usize) i64 {
 fn to_x_px(norm: f32, chamber_width: usize) i64 {
     const chamber_width_f: f32 = @floatFromInt(chamber_width);
     return @intFromFloat(norm * chamber_width_f);
-}
-
-const LINE_WIDTH: usize = 4;
-
-fn renderLineXMajor(start: Pos2, end: Pos2, chamber_width: usize, chamber_height: usize, canvas: []u32) void {
-    const start_y_px = to_y_px(start.y, chamber_width, chamber_height);
-    const end_y_px = to_y_px(end.y, chamber_width, chamber_height);
-    const y_dist = end_y_px - start_y_px;
-
-    const start_x_px = to_x_px(start.x, chamber_width);
-    const end_x_px = to_x_px(end.x, chamber_width);
-    const x_dist = end_x_px - start_x_px;
-
-    const increment = std.math.sign(x_dist);
-    std.debug.assert(increment != 0);
-
-    var x = start_x_px;
-    while (true) {
-        const y_center: usize = @intCast(@divTrunc((x - start_x_px) * y_dist, x_dist) + start_y_px);
-        for (@max(y_center - LINE_WIDTH, 0)..@min(y_center + LINE_WIDTH, chamber_height)) |y| {
-            canvas[y * chamber_width + @as(usize, @intCast(x))] = 0xff000000;
-        }
-
-        x += increment;
-        if (x == end_x_px) {
-            break;
-        }
-    }
-}
-
-fn renderLineYMajor(start: Pos2, end: Pos2, chamber_width: usize, chamber_height: usize, canvas: []u32) void {
-    const start_y_px = to_y_px(start.y, chamber_width, chamber_height);
-    const end_y_px = to_y_px(end.y, chamber_width, chamber_height);
-    const y_dist = end_y_px - start_y_px;
-
-    const start_x_px = to_x_px(start.x, chamber_width);
-    const end_x_px = to_x_px(end.x, chamber_width);
-    const x_dist = end_x_px - start_x_px;
-
-    const increment = std.math.sign(y_dist);
-    std.debug.assert(increment != 0);
-
-    var y = start_y_px;
-    while (true) {
-        const x_center: usize = @intCast(@divTrunc((y - start_y_px) * x_dist, y_dist) + start_x_px);
-        for (@max(x_center - LINE_WIDTH, 0)..@min(x_center + LINE_WIDTH, chamber_width)) |x| {
-            canvas[@as(usize, @intCast(y)) * chamber_width + x] = 0xff000000;
-        }
-
-        y += increment;
-        if (y == end_y_px) {
-            break;
-        }
-    }
-}
-
-fn renderLine(start: Pos2, end: Pos2, chamber_width: usize, chamber_height: usize, canvas: []u32) void {
-    const x_dist = @abs(end.x - start.x);
-    const y_dist = @abs(end.y - start.y);
-
-    if (x_dist > y_dist) {
-        renderLineXMajor(start, end, chamber_width, chamber_height, canvas);
-    } else {
-        renderLineYMajor(start, end, chamber_width, chamber_height, canvas);
-    }
 }
 
 const SpinnyBarCalculator = struct {
