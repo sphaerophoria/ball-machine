@@ -1,4 +1,8 @@
-import { ChamberRenderer } from "./chamber_renderer.js";
+import {
+  renderChamberIntoCanvas,
+  canvas_width,
+  renderBallsIntoCanvas,
+} from "./chamber_renderer.js";
 
 function getBalls(simulation) {
   const state_ptr = simulation.instance.exports.state();
@@ -12,6 +16,38 @@ function getBalls(simulation) {
   var dec = new TextDecoder();
   const str = dec.decode(state_arr.slice(0, js_len));
   return JSON.parse(str);
+}
+
+export class ChamberRenderer {
+  constructor(parent, chamber_height) {
+    this.canvas = document.createElement("canvas");
+    parent.appendChild(this.canvas);
+
+    this.canvas.width = canvas_width;
+    this.canvas.height = this.canvas.width * chamber_height;
+  }
+
+  makeBounds() {
+    return {
+      x: 0,
+      y: 0,
+      width: Math.floor(this.canvas.width),
+      height: Math.floor(this.canvas.height),
+    };
+  }
+
+  renderBalls(balls) {
+    renderBallsIntoCanvas(balls, this.canvas, this.makeBounds());
+  }
+
+  renderChamber(chamber) {
+    renderChamberIntoCanvas(chamber, this.canvas, this.makeBounds());
+  }
+
+  render(balls, chamber) {
+    this.renderChamber(chamber);
+    this.renderBalls(balls);
+  }
 }
 
 export class LocalSimulation {
@@ -39,7 +75,7 @@ export class LocalSimulation {
     const elapsed = (Date.now() - this.start) / 1000;
     this.simulation.instance.exports.stepUntil(elapsed);
 
-    this.canvas.renderPopulatedChamber(getBalls(this.simulation), this.chamber);
+    this.canvas.render(getBalls(this.simulation), this.chamber);
     window.setTimeout(() => this.render(), 16);
   }
 }
