@@ -118,7 +118,7 @@ const Args = struct {
                 help(process_name);
             },
             .client_secret = client_secret orelse {
-                print("--client-id not provided\n", .{});
+                print("--client-secret not provided\n", .{});
                 help(process_name);
             },
             .db = db orelse {
@@ -126,7 +126,7 @@ const Args = struct {
                 help(process_name);
             },
             .server_url = server_url orelse {
-                print("--server-url not provided", .{});
+                print("--server-url not provided\n", .{});
                 help(process_name);
             },
             .it = it,
