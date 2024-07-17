@@ -322,9 +322,9 @@ fn runCargo(b: *Build, options: BuildOptions, crate_root: []const u8, output_fil
 }
 
 fn generateDudeAnimation(b: *Build) std.Build.LazyPath {
+    const export_animation_path = b.path("src/chambers/dude/export_animation.py").getPath(b);
     const tool_run = b.addSystemCommand(&.{"blender"});
-    tool_run.setCwd(b.path("src/chambers/dude"));
-    tool_run.addArgs(&.{ "-b", "-P", "export_animation.py", "--" });
+    tool_run.addArgs(&.{ "-b", "-P", export_animation_path, "--" });
     tool_run.addFileInput(b.path("src/chambers/dude/dude.blend"));
     tool_run.addFileInput(b.path("src/chambers/dude/export_animation.py"));
     return tool_run.addOutputFileArg("animation.zig");
