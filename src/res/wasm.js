@@ -37,6 +37,11 @@ class SimulationCallbacks {
   }
 
   stepChamber(balls_ptr, byte_len, num_balls, delta) {
+    if (num_balls == 0) {
+      this.chamber.instance.exports.step(num_balls, delta);
+      return;
+    }
+
     let sim_balls = new Uint8Array(
       this.simulation.instance.exports.memory.buffer,
       balls_ptr,
