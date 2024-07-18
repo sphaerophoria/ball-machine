@@ -11,7 +11,7 @@ function renderBorder(canvas, bounds) {
   }
 }
 
-export function renderChamberIntoCanvas(chamber, canvas, bounds) {
+export async function renderChamberIntoCanvas(chamber, canvas, bounds) {
   const ctx = canvas.getContext("2d");
 
   chamber.instance.exports.render(bounds.width, bounds.height);

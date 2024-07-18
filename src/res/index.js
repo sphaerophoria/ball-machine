@@ -32,7 +32,7 @@ class RemoteChamber {
   async render(simulation_state, canvas, bounds) {
     loadChamber(this.chamber, simulation_state.chamber_states[this.id]);
 
-    renderChamberIntoCanvas(this.chamber, canvas, bounds);
+    await renderChamberIntoCanvas(this.chamber, canvas, bounds);
     const balls = simulation_state.chamber_balls[this.id];
     renderBallsIntoCanvas(balls, canvas, bounds);
   }
@@ -70,6 +70,7 @@ class ChamberRegistry {
     this.chambers_per_row = chambers_per_row;
     this.updateQueue();
     this.render();
+    this.scheduler_offs = 300 * 16;
     this.x_offs = 0;
     this.y_offs = 0;
   }
@@ -101,41 +102,76 @@ class ChamberRegistry {
   }
 
   async updateQueue() {
-    if (this.simulation_queue.length < 30) {
-      const simulation_response = await fetch(
-        "/simulation_state?since=" + this.last_step,
-      );
-      const new_elems = await simulation_response.json();
-      this.simulation_queue = [...this.simulation_queue, ...new_elems];
-      this.last_step =
-        this.simulation_queue[this.simulation_queue.length - 1].num_steps_taken;
+    const simulation_response = await fetch(
+      "/simulation_state?since=" + this.last_step,
+    );
+    const new_elems = await simulation_response.json();
+    const retrieved_time = performance.now();
+    for (let i = 0; i < new_elems.length; i += 1) {
+      const elem = new_elems[new_elems.length - i - 1];
+      elem.estimated_time = retrieved_time - 16 * i;
     }
-    window.setTimeout(() => this.updateQueue(), 100);
+    // Weighted avergae offset
+    const new_offs = 16 * new_elems.length;
+    if (new_offs > this.scheduler_offs) {
+      this.scheduler_offs = new_offs;
+    } else {
+      this.scheduler_offs = this.scheduler_offs * 0.8 + new_offs * 0.2;
+    }
+    this.simulation_queue = [...this.simulation_queue, ...new_elems];
+    this.last_step = new_elems[new_elems.length - 1].num_steps_taken;
+    window.setTimeout(() => this.updateQueue(), 300);
+  }
+
+  getNextFrame() {
+    const now = performance.now();
+    if (this.simulation_queue.length < 1) {
+      return null;
+    }
+
+    let i = 0;
+    while (i < this.simulation_queue.length) {
+      if (this.simulation_queue[i].estimated_time + this.scheduler_offs > now) {
+        break;
+      }
+      i += 1;
+    }
+
+    if (i == 0) {
+      return null;
+    }
+
+    const ret = this.simulation_queue[i - 1];
+    this.simulation_queue.splice(0, i - 1);
+    return ret;
   }
 
   async render() {
+    window.requestAnimationFrame(() => this.render());
+    const simulation_state = this.getNextFrame();
+    if (simulation_state === null) {
+      return;
+    }
+
     this.x_offs += 0.05;
     this.y_offs += 0.01;
     this.x_offs %= this.large_canvas.width;
     this.y_offs += this.large_canvas.height;
-    window.setTimeout(() => this.render(), 16);
-    const simulation_state = this.simulation_queue.shift();
-    if (simulation_state !== undefined) {
-      for (let i = 0; i < this.chambers.length; i++) {
-        const chamber = this.chambers[i];
 
-        const row = Math.floor(i / this.chambers_per_row);
-        const col = i % this.chambers_per_row;
-        const bounds = {
-          x: col * canvas_width + this.x_offs,
-          y: Math.floor(row * this.chamber_height * canvas_width) + this.y_offs,
-          width: canvas_width,
-          height: Math.floor(this.chamber_height * canvas_width),
-        };
-        try {
-          chamber.render(simulation_state, this.large_canvas, bounds);
-        } catch (e) {}
-      }
+    for (let i = 0; i < this.chambers.length; i++) {
+      const chamber = this.chambers[i];
+
+      const row = Math.floor(i / this.chambers_per_row);
+      const col = i % this.chambers_per_row;
+      const bounds = {
+        x: col * canvas_width + this.x_offs,
+        y: Math.floor(row * this.chamber_height * canvas_width) + this.y_offs,
+        width: canvas_width,
+        height: Math.floor(this.chamber_height * canvas_width),
+      };
+      try {
+        chamber.render(simulation_state, this.large_canvas, bounds);
+      } catch (e) {}
     }
   }
 }

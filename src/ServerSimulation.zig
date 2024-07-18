@@ -72,7 +72,7 @@ fn initEmpty(alloc: Allocator, capacity: usize) !ServerSimulation {
     var chamber_ids = try ChamberIds.initCapacity(alloc, capacity);
     errdefer chamber_ids.deinit(alloc);
 
-    var history = try SnapshotHistory.init(alloc, 15, alloc);
+    var history = try SnapshotHistory.init(alloc, 120, alloc);
     errdefer history.deinit(alloc);
 
     return ServerSimulation{
