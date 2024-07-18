@@ -323,6 +323,13 @@ fn runCargo(b: *Build, options: BuildOptions, crate_root: []const u8, output_fil
 
 fn generateDudeAnimation(b: *Build) std.Build.LazyPath {
     const tool_run = b.addSystemCommand(&.{"blender"});
+
+    // PWD gets inherited from wherever we run zig build from. Blender prefers
+    // PWD over the chdir call in setCwd
+    // https://github.com/blender/blender/blob/604dc2cc33d00ef4ed8425260d97d1b08f7c8362/source/blender/blenlib/intern/storage.cc#L96
+    const env_map = tool_run.getEnvMap();
+    env_map.remove("PWD");
+
     tool_run.setCwd(b.path("src/chambers/dude"));
     tool_run.addArgs(&.{ "-b", "-P", "export_animation.py", "--" });
     tool_run.addFileInput(b.path("src/chambers/dude/dude.blend"));
