@@ -11,7 +11,12 @@ function renderBorder(canvas, bounds) {
   }
 }
 
-export async function renderChamberIntoCanvas(chamber, canvas, bounds) {
+export async function renderChamberIntoCanvas(
+  chamber,
+  canvas,
+  bounds,
+  offscreenCanvas,
+) {
   const ctx = canvas.getContext("2d");
 
   chamber.instance.exports.render(bounds.width, bounds.height);
@@ -24,8 +29,17 @@ export async function renderChamberIntoCanvas(chamber, canvas, bounds) {
 
   const img_data = new ImageData(canvas_data, bounds.width, bounds.height);
 
+  if (offscreenCanvas !== undefined) {
+    const offscreen_ctx = offscreenCanvas.getContext("2d");
+    offscreen_ctx.putImageData(img_data, 0, 0);
+  }
+
   for (const pos of getCanvasPositions(canvas, bounds)) {
-    ctx.putImageData(img_data, pos.x, pos.y);
+    if (offscreenCanvas === undefined) {
+      ctx.putImageData(img_data, pos.x, pos.y);
+    } else {
+      ctx.drawImage(offscreenCanvas, pos.x, pos.y);
+    }
   }
   renderBorder(canvas, bounds);
 }

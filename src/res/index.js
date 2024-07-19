@@ -29,10 +29,18 @@ class RemoteChamber {
     chamber.instance.exports.init(0, chamber_pixel_len);
   }
 
-  async render(simulation_state, canvas, bounds) {
+  async render(simulation_state, canvas, bounds, offscreen_canvas) {
     loadChamber(this.chamber, simulation_state.chamber_states[this.id]);
 
-    await renderChamberIntoCanvas(this.chamber, canvas, bounds);
+    const ctx = canvas.getContext("2d");
+    ctx.filter = document.getElementById("filter").value;
+    await renderChamberIntoCanvas(
+      this.chamber,
+      canvas,
+      bounds,
+      offscreen_canvas,
+    );
+    ctx.filter = "none";
     const balls = simulation_state.chamber_balls[this.id];
     renderBallsIntoCanvas(balls, canvas, bounds);
   }
@@ -158,6 +166,9 @@ class ChamberRegistry {
     this.x_offs %= this.large_canvas.width;
     this.y_offs += this.large_canvas.height;
 
+    const canvas_height = Math.floor(this.chamber_height * canvas_width);
+    const offscreen_canvas = new OffscreenCanvas(canvas_width, canvas_height);
+
     for (let i = 0; i < this.chambers.length; i++) {
       const chamber = this.chambers[i];
 
@@ -167,10 +178,15 @@ class ChamberRegistry {
         x: col * canvas_width + this.x_offs,
         y: Math.floor(row * this.chamber_height * canvas_width) + this.y_offs,
         width: canvas_width,
-        height: Math.floor(this.chamber_height * canvas_width),
+        height: canvas_height,
       };
       try {
-        chamber.render(simulation_state, this.large_canvas, bounds);
+        chamber.render(
+          simulation_state,
+          this.large_canvas,
+          bounds,
+          offscreen_canvas,
+        );
       } catch (e) {}
     }
   }
