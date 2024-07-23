@@ -120,10 +120,7 @@ export class SplitLocalSimulation {
     render_save.set(physics_save);
     this.render_chamber.instance.exports.load();
 
-    this.canvas.renderPopulatedChamber(
-      getBalls(this.simulation),
-      this.render_chamber,
-    );
+    this.canvas.render(getBalls(this.simulation), this.render_chamber);
     window.setTimeout(() => this.render(), 16);
   }
 }
