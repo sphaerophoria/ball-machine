@@ -24,7 +24,7 @@ class RemoteChamber {
     this.chamber = chamber;
     this.id = id;
     const chamber_pixel_len = Math.ceil(
-      canvas_width * canvas_width * canvas_height * 4,
+      canvas_width * canvas_width * canvas_height,
     );
     chamber.instance.exports.init(0, chamber_pixel_len);
   }
