@@ -31,7 +31,7 @@ void step(size_t num_balls, float delta);
  * Pixels are represented as 4 byte chunks of RGBA. Feel free to use a u32 with
  * 0xaabbggrr
  *
- * Note that canavs_width * canvas_height may be less than max_canvas_size, but
+ * Note that canvas_width * canvas_height may be less than max_canvas_size, but
  * will never be greater
  *
  * canvasMemory() can be re-used between frames, so free to re-use previous
